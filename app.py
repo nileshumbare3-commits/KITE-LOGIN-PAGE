@@ -138,8 +138,8 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
         trade_day_df.loc[:, 'cum_volume'] = trade_day_df['volume'].cumsum()
         trade_day_df.loc[:, 'cum_volume_price'] = (trade_day_df['close'] * trade_day_df['volume']).cumsum()
         trade_day_df.loc[:, 'avwap'] = trade_day_df['cum_volume_price'] / trade_day_df['cum_volume']
-        trade_day_df.loc[:, 'price_change'] = trade_day_df['close'].diff().fillna(0)
-        trade_day_df.loc[:, 'std_dev'] = trade_day_df['price_change'].expanding().std()
+        # Corrected SD calculation: Use expanding std of the price itself, not price changes.
+        trade_day_df.loc[:, 'std_dev'] = trade_day_df['close'].expanding().std()
         trade_day_df.loc[:, 'upper_band'] = trade_day_df['avwap'] + trade_day_df['std_dev']
         trade_day_df.loc[:, 'lower_band'] = trade_day_df['avwap'] - trade_day_df['std_dev']
         if use_tsl and tsl_mode == 'ema':
