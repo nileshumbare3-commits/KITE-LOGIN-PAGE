@@ -188,13 +188,15 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
 
             if not in_position:
                 def get_strike(price): return round(price / 50) * 50
-                if row['close'] > row['upper_band']:
+                # Bullish breakout with confirmation
+                if row['close'] > row['upper_band'] and row['open'] < row['upper_band']:
                     print("    *** BULLISH BREAKOUT DETECTED ***")
                     in_position, strike = True, get_strike(row['close'])
                     current_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} PE"}
                     high_water_mark = row['close']
                     print(f"    -> ENTERING TRADE: {current_trade}")
-                elif row['close'] < row['lower_band']:
+                # Bearish breakout with confirmation
+                elif row['close'] < row['lower_band'] and row['open'] > row['lower_band']:
                     print("    *** BEARISH BREAKOUT DETECTED ***")
                     in_position, strike = True, get_strike(row['close'])
                     current_trade = {"type": "SELL_CALL_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} CE"}
