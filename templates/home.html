@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .home-container {
+            text-align: center;
+        }
+        .logout-button {
+            display: inline-block;
+            padding: 10px 20px;
+            font-size: 16px;
+            color: white;
+            background-color: #d9534f;
+            border: none;
+            border-radius: 5px;
+            text-decoration: none;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="home-container">
+        <h1>Welcome, {{ user.user_name }}!</h1>
+        <p>You are successfully connected to the trading terminal.</p>
+        <p>Your email: {{ user.email }}</p>
+        <a href="/logout" class="logout-button">Logout</a>
+    </div>
+</body>
+</html>
