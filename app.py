@@ -84,7 +84,7 @@ def update_instruments():
         kite.set_access_token(session["access_token"])
         instruments = kite.instruments()
         df = pd.DataFrame(instruments)
-        df.to_csv("instruments.csv", index=False)
+        df.to_csv("instance/instruments.csv", index=False)
         return f"Successfully updated and cached {len(df)} instruments."
     except Exception as e:
         return f"Error updating instruments: {e}", 500
@@ -96,7 +96,7 @@ def search_instruments():
         return jsonify([])
 
     try:
-        df = pd.read_csv("instruments.csv")
+        df = pd.read_csv("instance/instruments.csv")
         # Search for NFO instruments containing the query
         mask = (df['tradingsymbol'].str.contains(query)) & (df['exchange'] == 'NFO')
         results = df[mask].head(10) # Limit results to 10
