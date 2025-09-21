@@ -136,12 +136,19 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
         trade_day_df = day_df[day_df['date'].dt.time >= pd.to_datetime("09:30").time()].copy()
         if trade_day_df.empty: continue
         trade_day_df.loc[:, 'cum_volume'] = trade_day_df['volume'].cumsum()
+        # VWAP based on close (for reference)
         trade_day_df.loc[:, 'cum_volume_price'] = (trade_day_df['close'] * trade_day_df['volume']).cumsum()
         trade_day_df.loc[:, 'avwap'] = trade_day_df['cum_volume_price'] / trade_day_df['cum_volume']
-        # Corrected SD calculation: Use expanding std of the price itself, not price changes.
+
+        # Custom VWAP High/Low Bands
+        trade_day_df.loc[:, 'cum_volume_high'] = (trade_day_df['high'] * trade_day_df['volume']).cumsum()
+        trade_day_df.loc[:, 'vwap_high'] = trade_day_df['cum_volume_high'] / trade_day_df['cum_volume']
+        trade_day_df.loc[:, 'cum_volume_low'] = (trade_day_df['low'] * trade_day_df['volume']).cumsum()
+        trade_day_df.loc[:, 'vwap_low'] = trade_day_df['cum_volume_low'] / trade_day_df['cum_volume']
+
         trade_day_df.loc[:, 'std_dev'] = trade_day_df['close'].expanding().std()
-        trade_day_df.loc[:, 'upper_band'] = trade_day_df['avwap'] + trade_day_df['std_dev']
-        trade_day_df.loc[:, 'lower_band'] = trade_day_df['avwap'] - trade_day_df['std_dev']
+        trade_day_df.loc[:, 'upper_band'] = trade_day_df['vwap_high'] + trade_day_df['std_dev']
+        trade_day_df.loc[:, 'lower_band'] = trade_day_df['vwap_low'] - trade_day_df['std_dev']
         if use_tsl and tsl_mode == 'ema':
             trade_day_df.loc[:, 'tsl_ema'] = trade_day_df['close'].ewm(span=tsl_ema_period, adjust=False).mean()
 
