@@ -6,8 +6,8 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 # Replace with your API key and secret
-api_key = "YOUR_API_KEY"
-api_secret = "YOUR_API_SECRET"
+api_key = "jaibrxwjfdmr86ao"
+api_secret = "se1mzachqkdv963oqgbu7ij0y6002di1"
 
 kite = KiteConnect(api_key=api_key)
 
