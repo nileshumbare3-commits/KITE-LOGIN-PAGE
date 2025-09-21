@@ -18,6 +18,10 @@
         th { background-color: #f2f2f2; }
         .nav { margin-bottom: 20px; }
         .nav a { margin-right: 15px; text-decoration: none; }
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .summary-item { background-color: #f9f9f9; border: 1px solid #eee; padding: 15px; border-radius: 5px; text-align: center; }
+        .summary-item h4 { margin: 0 0 10px 0; }
+        .summary-item p { margin: 0; font-size: 1.2em; font-weight: bold; }
         /* Autocomplete styles */
         .autocomplete-results { position: absolute; border: 1px solid #ddd; border-top: none; z-index: 99; top: 100%; left: 0; right: 0; background-color: white; }
         .autocomplete-results div { padding: 10px; cursor: pointer; }
@@ -39,8 +43,8 @@
             <form method="POST" action="/backtest">
                 <div class="form-group">
                     <label for="instrument_search">Search Instrument (e.g., NIFTY FUT)</label>
-                    <input type="text" id="instrument_search" name="instrument_search" autocomplete="off">
-                    <input type="hidden" id="instrument_token" name="instrument_token">
+                    <input type="text" id="instrument_search" name="instrument_search" autocomplete="off" required>
+                    <input type="hidden" id="instrument_token" name="instrument_token" required>
                     <div id="autocomplete-results" class="autocomplete-results"></div>
                 </div>
                 <div class="form-group">
@@ -73,7 +77,25 @@
         {% if results %}
         <div class="results-container">
             <h2>Backtest Results</h2>
-            <h3>Total Profit/Loss: <span style="color: {{ 'green' if results.total_pnl >= 0 else 'red' }};">{{ "%.2f"|format(results.total_pnl) }}</span></h3>
+
+            <div class="summary-grid">
+                <div class="summary-item">
+                    <h4>Total P&L (₹)</h4>
+                    <p style="color: {{ 'green' if results.total_pnl >= 0 else 'red' }};">{{ "%.2f"|format(results.total_pnl) }}</p>
+                </div>
+                <div class="summary-item">
+                    <h4>Win Rate (%)</h4>
+                    <p>{{ "%.2f"|format(results.summary.win_percentage) }}%</p>
+                </div>
+                <div class="summary-item">
+                    <h4>Avg. Profit on Wins (₹)</h4>
+                    <p style="color: green;">{{ "%.2f"|format(results.summary.avg_profit_win) }}</p>
+                </div>
+                <div class="summary-item">
+                    <h4>Avg. Loss on Losses (₹)</h4>
+                    <p style="color: red;">{{ "%.2f"|format(results.summary.avg_loss_lose) }}</p>
+                </div>
+            </div>
 
             <h4>Trades</h4>
             <table>
@@ -81,10 +103,12 @@
                     <tr>
                         <th>Entry Time</th>
                         <th>Entry Price</th>
+                        <th>Strike Traded</th>
                         <th>Exit Time</th>
                         <th>Exit Price</th>
-                        <th>Trade Type</th>
-                        <th>Profit/Loss (₹)</th>
+                        <th>Max Profit (₹)</th>
+                        <th>Max Loss (₹)</th>
+                        <th>Final P&L (₹)</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -92,9 +116,11 @@
                     <tr>
                         <td>{{ trade.entry_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                         <td>{{ "%.2f"|format(trade.entry_price) }}</td>
+                        <td>{{ trade.strike_traded }}</td>
                         <td>{{ trade.exit_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                         <td>{{ "%.2f"|format(trade.exit_price) }}</td>
-                        <td>{{ trade.type }}</td>
+                        <td style="color: green;">{{ "%.2f"|format(trade.max_profit) }}</td>
+                        <td style="color: red;">{{ "%.2f"|format(trade.max_loss) }}</td>
                         <td style="color: {{ 'green' if trade.pnl >= 0 else 'red' }};">{{ "%.2f"|format(trade.pnl) }}</td>
                     </tr>
                     {% endfor %}
@@ -137,7 +163,6 @@
             });
         });
 
-        // Hide results when clicking outside
         document.addEventListener('click', (e) => {
             if (e.target !== searchInput) {
                 resultsContainer.innerHTML = '';

@@ -117,7 +117,7 @@ def search_instruments():
 
 def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target):
     """
-    Runs the AVWAP breakout backtest strategy with re-entry logic.
+    Runs the AVWAP breakout backtest strategy with re-entry logic and enhanced reporting.
     """
     kite.set_access_token(session["access_token"])
 
@@ -143,7 +143,6 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
         if trade_day_df.empty:
             continue
 
-        # Calculate AVWAP and bands for the entire day
         trade_day_df['cum_volume'] = trade_day_df['volume'].cumsum()
         trade_day_df['cum_volume_price'] = (trade_day_df['close'] * trade_day_df['volume']).cumsum()
         trade_day_df['avwap'] = trade_day_df['cum_volume_price'] / trade_day_df['cum_volume']
@@ -156,17 +155,19 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
         current_trade = {}
 
         for i, row in trade_day_df.iterrows():
-            # Check for exit conditions if in a position
             if in_position:
                 lot_size = 50
                 price_change = row['close'] - current_trade['entry_price']
 
                 if current_trade['type'] == 'SELL_PUT_SPREAD':
                     pnl = price_change * 0.3 * lot_size
-                else: # SELL_CALL_SPREAD
+                else:
                     pnl = -price_change * 0.3 * lot_size
 
-                # Check for stop-loss or take-profit
+                # Track max profit/loss
+                current_trade['max_profit'] = max(current_trade.get('max_profit', pnl), pnl)
+                current_trade['max_loss'] = min(current_trade.get('max_loss', pnl), pnl)
+
                 if pnl <= -stop_loss or pnl >= target:
                     current_trade['exit_price'] = row['close']
                     current_trade['exit_time'] = row['date']
@@ -175,18 +176,29 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
                     in_position = False
                     current_trade = {}
 
-            # Check for entry conditions if not in a position
             if not in_position:
-                # Upper band breakout
+                def get_strike(price):
+                    return round(price / 50) * 50
+
                 if row['close'] > row['upper_band']:
                     in_position = True
-                    current_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date']}
-                # Lower band breakout
+                    strike = get_strike(row['close'])
+                    current_trade = {
+                        "type": "SELL_PUT_SPREAD",
+                        "entry_price": row['close'],
+                        "entry_time": row['date'],
+                        "strike_traded": f"{strike} PE"
+                    }
                 elif row['close'] < row['lower_band']:
                     in_position = True
-                    current_trade = {"type": "SELL_CALL_SPREAD", "entry_price": row['close'], "entry_time": row['date']}
+                    strike = get_strike(row['close'])
+                    current_trade = {
+                        "type": "SELL_CALL_SPREAD",
+                        "entry_price": row['close'],
+                        "entry_time": row['date'],
+                        "strike_traded": f"{strike} CE"
+                    }
 
-        # End of day check: close any open position
         if in_position:
             last_row = trade_day_df.iloc[-1]
             price_change = last_row['close'] - current_trade['entry_price']
@@ -198,11 +210,26 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
             current_trade['exit_price'] = last_row['close']
             current_trade['exit_time'] = last_row['date']
             current_trade['pnl'] = pnl
+            current_trade['max_profit'] = max(current_trade.get('max_profit', pnl), pnl)
+            current_trade['max_loss'] = min(current_trade.get('max_loss', pnl), pnl)
             all_trades.append(current_trade)
 
+    # --- Calculate Summary Statistics ---
     total_pnl = sum(trade['pnl'] for trade in all_trades)
+    winning_trades = [t for t in all_trades if t['pnl'] > 0]
+    losing_trades = [t for t in all_trades if t['pnl'] <= 0]
 
-    return {"trades": all_trades, "total_pnl": total_pnl}
+    win_percentage = (len(winning_trades) / len(all_trades) * 100) if all_trades else 0
+    avg_profit_win = sum(t['pnl'] for t in winning_trades) / len(winning_trades) if winning_trades else 0
+    avg_loss_lose = sum(t['pnl'] for t in losing_trades) / len(losing_trades) if losing_trades else 0
+
+    summary = {
+        "win_percentage": win_percentage,
+        "avg_profit_win": avg_profit_win,
+        "avg_loss_lose": avg_loss_lose,
+    }
+
+    return {"trades": all_trades, "total_pnl": total_pnl, "summary": summary}
 
 if __name__ == "__main__":
     app.run(debug=True)
