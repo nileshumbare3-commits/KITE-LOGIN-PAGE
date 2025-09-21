@@ -1,4 +1,4 @@
-from flask import Flask, request, redirect, session, render_template
+from flask import Flask, request, redirect, session, render_template, jsonify
 from kiteconnect import KiteConnect
 import os
 import pandas as pd
@@ -72,6 +72,40 @@ def backtest():
             return render_template("backtest.html", error=str(e))
 
     return render_template("backtest.html", results=None)
+
+# --- Instrument Caching and Search ---
+
+@app.route("/api/update-instruments")
+def update_instruments():
+    if "access_token" not in session:
+        return "Error: You must be logged in to update the instrument list.", 401
+
+    try:
+        kite.set_access_token(session["access_token"])
+        instruments = kite.instruments()
+        df = pd.DataFrame(instruments)
+        df.to_csv("instruments.csv", index=False)
+        return f"Successfully updated and cached {len(df)} instruments."
+    except Exception as e:
+        return f"Error updating instruments: {e}", 500
+
+@app.route("/api/search-instruments")
+def search_instruments():
+    query = request.args.get("q", "").upper()
+    if not query:
+        return jsonify([])
+
+    try:
+        df = pd.read_csv("instruments.csv")
+        # Search for NFO instruments containing the query
+        mask = (df['tradingsymbol'].str.contains(query)) & (df['exchange'] == 'NFO')
+        results = df[mask].head(10) # Limit results to 10
+        return jsonify(results.to_dict(orient="records"))
+    except FileNotFoundError:
+        return jsonify({"error": "Instrument cache not found. Please log in and visit /api/update-instruments first."}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target):
     """
