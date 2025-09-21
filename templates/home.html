@@ -32,10 +32,14 @@
 </head>
 <body>
     <div class="home-container">
+        <div class="nav" style="text-align: center; margin-bottom: 20px;">
+            <a href="/home">Home</a>
+            <a href="/backtest">Backtesting</a>
+            <a href="/logout" style="float: right;">Logout</a>
+        </div>
         <h1>Welcome, {{ user.user_name }}!</h1>
         <p>You are successfully connected to the trading terminal.</p>
         <p>Your email: {{ user.email }}</p>
-        <a href="/logout" class="logout-button">Logout</a>
     </div>
 </body>
 </html>

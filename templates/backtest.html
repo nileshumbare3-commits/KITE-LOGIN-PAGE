@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Option Intraday Backtesting</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        .container { max-width: 1200px; margin: auto; }
+        .form-container, .results-container { border: 1px solid #ccc; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; }
+        .form-group input { width: 100%; padding: 8px; box-sizing: border-box; }
+        .btn { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; }
+        .btn-primary { background-color: #387ed1; color: white; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .nav { margin-bottom: 20px; }
+        .nav a { margin-right: 15px; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="/home">Home</a>
+            <a href="/backtest">Backtesting</a>
+            <a href="/logout" style="float: right;">Logout</a>
+        </div>
+
+        <h1>Option Intraday Backtesting</h1>
+
+        <div class="form-container">
+            <h2>Strategy Configuration</h2>
+            <form method="POST" action="/backtest">
+                <div class="form-group">
+                    <label for="instrument_token">Instrument Token (e.g., Nifty Future)</label>
+                    <input type="text" id="instrument_token" name="instrument_token" required>
+                    <small>Note: You must find the historical instrument token for the contract you wish to test.</small>
+                </div>
+                <div class="form-group">
+                    <label for="from_date">From Date</label>
+                    <input type="date" id="from_date" name="from_date" required>
+                </div>
+                <div class="form-group">
+                    <label for="to_date">To Date</label>
+                    <input type="date" id="to_date" name="to_date" required>
+                </div>
+                <div class="form-group">
+                    <label for="stop_loss">Stop Loss (₹)</label>
+                    <input type="number" id="stop_loss" name="stop_loss" value="1500">
+                </div>
+                <div class="form-group">
+                    <label for="target">Target (₹)</label>
+                    <input type="number" id="target" name="target" value="4500">
+                </div>
+                <button type="submit" class="btn btn-primary">Run Backtest</button>
+            </form>
+        </div>
+
+        {% if results %}
+        <div class="results-container">
+            <h2>Backtest Results</h2>
+            <h3>Total Profit/Loss: <span style="color: {{ 'green' if results.total_pnl >= 0 else 'red' }};">{{ "%.2f"|format(results.total_pnl) }}</span></h3>
+
+            <h4>Trades</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Entry Time</th>
+                        <th>Entry Price</th>
+                        <th>Exit Time</th>
+                        <th>Exit Price</th>
+                        <th>Trade Type</th>
+                        <th>Profit/Loss (₹)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in results.trades %}
+                    <tr>
+                        <td>{{ trade.entry_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td>{{ "%.2f"|format(trade.entry_price) }}</td>
+                        <td>{{ trade.exit_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td>{{ "%.2f"|format(trade.exit_price) }}</td>
+                        <td>{{ trade.type }}</td>
+                        <td style="color: {{ 'green' if trade.pnl >= 0 else 'red' }};">{{ "%.2f"|format(trade.pnl) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>
