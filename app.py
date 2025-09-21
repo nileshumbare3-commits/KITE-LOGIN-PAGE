@@ -45,7 +45,6 @@ def callback():
     request_token = request.args.get("request_token")
     if not request_token:
         return "Error: request_token not found."
-
     try:
         data = kite.generate_session(request_token, api_secret=api_secret)
         session["access_token"] = data["access_token"]
@@ -86,7 +85,6 @@ def backtest():
             tsl_fixed_amount = float(request.form.get("tsl_fixed_amount", 0))
             tsl_ema_period = int(request.form.get("tsl_ema_period", 9))
             timeframe = request.form.get("timeframe", "5minute")
-
             results = run_backtest(
                 instrument_token, from_date_str, to_date_str, stop_loss, target,
                 use_tsl, tsl_mode, tsl_fixed_amount, tsl_ema_period, timeframe
@@ -115,73 +113,103 @@ def search_instruments():
 
 def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target,
                  use_tsl, tsl_mode, tsl_fixed_amount, tsl_ema_period, timeframe):
+    """
+    DEBUG VERSION: Runs the backtest strategy with extensive logging.
+    """
+    print("\n--- NEW BACKTEST RUN ---")
+    print(f"Params: token={instrument_token}, from={from_date_str}, to={to_date_str}, sl={stop_loss}, tgt={target}, timeframe={timeframe}")
+    print(f"TSL Params: use_tsl={use_tsl}, mode={tsl_mode}, fixed_amt={tsl_fixed_amount}, ema_period={tsl_ema_period}")
+
     kite.set_access_token(session["access_token"])
     from_date = datetime.strptime(from_date_str, "%Y-%m-%d")
     to_date = datetime.strptime(to_date_str, "%Y-%m-%d")
     historical_data = kite.historical_data(instrument_token, from_date, to_date + timedelta(days=1), timeframe)
-    if not historical_data:
-        raise Exception("Could not fetch historical data. Please check token/dates.")
+    if not historical_data: raise Exception("Could not fetch historical data.")
     df = pd.DataFrame(historical_data)
     df['date'] = pd.to_datetime(df['date'])
     all_trades = []
+
     for day in pd.date_range(start=from_date, end=to_date):
         day_df = df[df['date'].dt.date == day.date()]
         if day_df.empty: continue
+        print(f"\n--- Processing Day: {day.date()} ---")
         trade_day_df = day_df[day_df['date'].dt.time >= pd.to_datetime("09:30").time()].copy()
         if trade_day_df.empty: continue
-        trade_day_df['cum_volume'] = trade_day_df['volume'].cumsum()
-        trade_day_df['cum_volume_price'] = (trade_day_df['close'] * trade_day_df['volume']).cumsum()
-        trade_day_df['avwap'] = trade_day_df['cum_volume_price'] / trade_day_df['cum_volume']
-        trade_day_df['price_change'] = trade_day_df['close'].diff().fillna(0)
-        trade_day_df['std_dev'] = trade_day_df['price_change'].expanding().std()
-        trade_day_df['upper_band'] = trade_day_df['avwap'] + trade_day_df['std_dev']
-        trade_day_df['lower_band'] = trade_day_df['avwap'] - trade_day_df['std_dev']
+        trade_day_df.loc[:, 'cum_volume'] = trade_day_df['volume'].cumsum()
+        trade_day_df.loc[:, 'cum_volume_price'] = (trade_day_df['close'] * trade_day_df['volume']).cumsum()
+        trade_day_df.loc[:, 'avwap'] = trade_day_df['cum_volume_price'] / trade_day_df['cum_volume']
+        trade_day_df.loc[:, 'price_change'] = trade_day_df['close'].diff().fillna(0)
+        trade_day_df.loc[:, 'std_dev'] = trade_day_df['price_change'].expanding().std()
+        trade_day_df.loc[:, 'upper_band'] = trade_day_df['avwap'] + trade_day_df['std_dev']
+        trade_day_df.loc[:, 'lower_band'] = trade_day_df['avwap'] - trade_day_df['std_dev']
         if use_tsl and tsl_mode == 'ema':
-            trade_day_df['tsl_ema'] = trade_day_df['close'].ewm(span=tsl_ema_period, adjust=False).mean()
+            trade_day_df.loc[:, 'tsl_ema'] = trade_day_df['close'].ewm(span=tsl_ema_period, adjust=False).mean()
+
         in_position = False
         current_trade = {}
-        high_water_mark = 0
-        low_water_mark = 0
+        high_water_mark, low_water_mark = 0, 0
+
         for i, row in trade_day_df.iterrows():
+            print(f"  - Candle: {row['date']}, Close: {row['close']:.2f}, Upper: {row['upper_band']:.2f}, Lower: {row['lower_band']:.2f}")
             if in_position:
                 lot_size = 50
                 price_change = row['close'] - current_trade['entry_price']
                 pnl = price_change * 0.3 * lot_size if current_trade['type'] == 'SELL_PUT_SPREAD' else -price_change * 0.3 * lot_size
                 current_trade['max_profit'] = max(current_trade.get('max_profit', pnl), pnl)
                 current_trade['max_loss'] = min(current_trade.get('max_loss', pnl), pnl)
+
                 exit_condition_met = False
-                if pnl >= target: exit_condition_met = True
+                if pnl >= target:
+                    print(f"    ! TARGET PROFIT HIT. PNL: {pnl:.2f}")
+                    exit_condition_met = True
                 elif use_tsl:
                     if current_trade['type'] == 'SELL_PUT_SPREAD':
                         high_water_mark = max(high_water_mark, row['close'])
                         tsl_price = high_water_mark - tsl_fixed_amount if tsl_mode == 'fixed' else row['tsl_ema']
-                        if row['close'] < tsl_price: exit_condition_met = True
+                        if row['close'] < tsl_price:
+                            print(f"    ! TSL HIT (Long). Price < TSL: {row['close']:.2f} < {tsl_price:.2f}")
+                            exit_condition_met = True
                     else:
                         low_water_mark = min(low_water_mark, row['close'])
                         tsl_price = low_water_mark + tsl_fixed_amount if tsl_mode == 'fixed' else row['tsl_ema']
-                        if row['close'] > tsl_price: exit_condition_met = True
-                elif pnl <= -stop_loss: exit_condition_met = True
+                        if row['close'] > tsl_price:
+                            print(f"    ! TSL HIT (Short). Price > TSL: {row['close']:.2f} > {tsl_price:.2f}")
+                            exit_condition_met = True
+                elif pnl <= -stop_loss:
+                    print(f"    ! INITIAL SL HIT. PNL: {pnl:.2f}")
+                    exit_condition_met = True
+
                 if exit_condition_met:
                     current_trade.update({'exit_price': row['close'], 'exit_time': row['date'], 'pnl': pnl})
                     all_trades.append(current_trade)
+                    print(f"    -> EXITING TRADE: {current_trade}")
                     in_position = False
                     current_trade = {}
+
             if not in_position:
                 def get_strike(price): return round(price / 50) * 50
                 if row['close'] > row['upper_band']:
+                    print("    *** BULLISH BREAKOUT DETECTED ***")
                     in_position, strike = True, get_strike(row['close'])
                     current_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} PE"}
                     high_water_mark = row['close']
+                    print(f"    -> ENTERING TRADE: {current_trade}")
                 elif row['close'] < row['lower_band']:
+                    print("    *** BEARISH BREAKOUT DETECTED ***")
                     in_position, strike = True, get_strike(row['close'])
                     current_trade = {"type": "SELL_CALL_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} CE"}
                     low_water_mark = row['close']
+                    print(f"    -> ENTERING TRADE: {current_trade}")
+
         if in_position:
             last_row = trade_day_df.iloc[-1]
             price_change = last_row['close'] - current_trade['entry_price']
             pnl = price_change * 0.3 * lot_size if current_trade['type'] == 'SELL_PUT_SPREAD' else -price_change * 0.3 * lot_size
             current_trade.update({'exit_price': last_row['close'], 'exit_time': last_row['date'], 'pnl': pnl, 'max_profit': max(current_trade.get('max_profit', pnl), pnl), 'max_loss': min(current_trade.get('max_loss', pnl), pnl)})
             all_trades.append(current_trade)
+            print(f"    -> EOD EXIT: {current_trade}")
+
+    print("--- BACKTEST RUN COMPLETE ---")
     total_pnl = sum(trade['pnl'] for trade in all_trades)
     winning_trades = [t for t in all_trades if t['pnl'] > 0]
     losing_trades = [t for t in all_trades if t['pnl'] <= 0]
