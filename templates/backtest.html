@@ -10,7 +10,7 @@
         .form-container, .results-container { border: 1px solid #ccc; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
         .form-group { margin-bottom: 15px; position: relative; }
         .form-group label { display: block; margin-bottom: 5px; }
-        .form-group input { width: 100%; padding: 8px; box-sizing: border-box; }
+        .form-group input[type="text"], .form-group input[type="date"], .form-group input[type="number"] { width: 100%; padding: 8px; box-sizing: border-box; }
         .btn { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; }
         .btn-primary { background-color: #387ed1; color: white; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
@@ -22,10 +22,10 @@
         .summary-item { background-color: #f9f9f9; border: 1px solid #eee; padding: 15px; border-radius: 5px; text-align: center; }
         .summary-item h4 { margin: 0 0 10px 0; }
         .summary-item p { margin: 0; font-size: 1.2em; font-weight: bold; }
-        /* Autocomplete styles */
         .autocomplete-results { position: absolute; border: 1px solid #ddd; border-top: none; z-index: 99; top: 100%; left: 0; right: 0; background-color: white; }
         .autocomplete-results div { padding: 10px; cursor: pointer; }
         .autocomplete-results div:hover { background-color: #f2f2f2; }
+        .tsl-options { border: 1px solid #eee; padding: 15px; margin-top: 10px; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -56,13 +56,31 @@
                     <input type="date" id="to_date" name="to_date" required>
                 </div>
                 <div class="form-group">
-                    <label for="stop_loss">Stop Loss (₹)</label>
+                    <label for="stop_loss">Initial Stop Loss (₹)</label>
                     <input type="number" id="stop_loss" name="stop_loss" value="1500">
                 </div>
                 <div class="form-group">
                     <label for="target">Target (₹)</label>
                     <input type="number" id="target" name="target" value="4500">
                 </div>
+
+                <div class="form-group">
+                    <label><input type="checkbox" id="use_tsl" name="use_tsl" value="true"> Use Trailing Stop Loss</label>
+                    <div id="tsl_options" class="tsl-options" style="display: none;">
+                        <label><input type="radio" name="tsl_mode" value="fixed" checked> Fixed</label>
+                        <div id="tsl_fixed_params">
+                            <label for="tsl_fixed_amount">Trail Amount (points)</label>
+                            <input type="number" id="tsl_fixed_amount" name="tsl_fixed_amount" value="20">
+                        </div>
+                        <br>
+                        <label><input type="radio" name="tsl_mode" value="ema"> EMA</label>
+                        <div id="tsl_ema_params" style="display: none;">
+                            <label for="tsl_ema_period">EMA Period</label>
+                            <input type="number" id="tsl_ema_period" name="tsl_ema_period" value="9">
+                        </div>
+                    </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary">Run Backtest</button>
             </form>
         </div>
@@ -131,42 +149,57 @@
     </div>
 
     <script>
+        // Autocomplete Script
         const searchInput = document.getElementById('instrument_search');
         const tokenInput = document.getElementById('instrument_token');
-        const resultsContainer = document.getElementById('autocomplete-results');
+        const acResultsContainer = document.getElementById('autocomplete-results');
 
         searchInput.addEventListener('keyup', async (e) => {
             const query = e.target.value;
-            resultsContainer.innerHTML = '';
-
-            if (query.length < 3) {
-                return;
-            }
-
+            acResultsContainer.innerHTML = '';
+            if (query.length < 3) return;
             const response = await fetch(`/api/search-instruments?q=${query}`);
             const instruments = await response.json();
-
             if (instruments.error) {
-                resultsContainer.innerHTML = `<div>${instruments.error}</div>`;
+                acResultsContainer.innerHTML = `<div>${instruments.error}</div>`;
                 return;
             }
-
             instruments.forEach(instrument => {
                 const item = document.createElement('div');
                 item.textContent = `${instrument.tradingsymbol} (${instrument.instrument_type} - ${instrument.exchange})`;
                 item.addEventListener('click', () => {
                     searchInput.value = instrument.tradingsymbol;
                     tokenInput.value = instrument.instrument_token;
-                    resultsContainer.innerHTML = '';
+                    acResultsContainer.innerHTML = '';
                 });
-                resultsContainer.appendChild(item);
+                acResultsContainer.appendChild(item);
             });
         });
-
         document.addEventListener('click', (e) => {
-            if (e.target !== searchInput) {
-                resultsContainer.innerHTML = '';
-            }
+            if (e.target !== searchInput) acResultsContainer.innerHTML = '';
+        });
+
+        // TSL UI Script
+        const useTslCheckbox = document.getElementById('use_tsl');
+        const tslOptionsDiv = document.getElementById('tsl_options');
+        const tslModeRadios = document.querySelectorAll('input[name="tsl_mode"]');
+        const tslFixedParamsDiv = document.getElementById('tsl_fixed_params');
+        const tslEmaParamsDiv = document.getElementById('tsl_ema_params');
+
+        useTslCheckbox.addEventListener('change', (e) => {
+            tslOptionsDiv.style.display = e.target.checked ? 'block' : 'none';
+        });
+
+        tslModeRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                if (e.target.value === 'fixed') {
+                    tslFixedParamsDiv.style.display = 'block';
+                    tslEmaParamsDiv.style.display = 'none';
+                } else {
+                    tslFixedParamsDiv.style.display = 'none';
+                    tslEmaParamsDiv.style.display = 'block';
+                }
+            });
         });
     </script>
 </body>
