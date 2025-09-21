@@ -117,9 +117,7 @@ def search_instruments():
 
 def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target):
     """
-    Runs the AVWAP breakout backtest strategy.
-    NOTE: This is a simplified simulation. It does not use historical options data for P&L calculation
-    due to the limitations of fetching historical instrument tokens. P&L is approximated.
+    Runs the AVWAP breakout backtest strategy with re-entry logic.
     """
     kite.set_access_token(session["access_token"])
 
@@ -138,68 +136,69 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
 
     for day in pd.date_range(start=from_date, end=to_date):
         day_df = df[df['date'].dt.date == day.date()]
-
         if day_df.empty:
             continue
 
         trade_day_df = day_df[day_df['date'].dt.time >= pd.to_datetime("09:30").time()].copy()
-
         if trade_day_df.empty:
             continue
 
+        # Calculate AVWAP and bands for the entire day
         trade_day_df['cum_volume'] = trade_day_df['volume'].cumsum()
         trade_day_df['cum_volume_price'] = (trade_day_df['close'] * trade_day_df['volume']).cumsum()
         trade_day_df['avwap'] = trade_day_df['cum_volume_price'] / trade_day_df['cum_volume']
-
         trade_day_df['price_change'] = trade_day_df['close'].diff().fillna(0)
         trade_day_df['std_dev'] = trade_day_df['price_change'].expanding().std()
-
         trade_day_df['upper_band'] = trade_day_df['avwap'] + trade_day_df['std_dev']
         trade_day_df['lower_band'] = trade_day_df['avwap'] - trade_day_df['std_dev']
 
-        entry_trade = None
+        in_position = False
+        current_trade = {}
+
         for i, row in trade_day_df.iterrows():
-            if entry_trade is None:
-                if row['close'] > row['upper_band']:
-                    entry_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date']}
-                    break
-                elif row['close'] < row['lower_band']:
-                    entry_trade = {"type": "SELL_CALL_SPREAD", "entry_price": row['close'], "entry_time": row['date']}
-                    break
-
-        if entry_trade:
-            position_active = True
-            for i, row in trade_day_df[trade_day_df['date'] > entry_trade['entry_time']].iterrows():
-                if not position_active:
-                    break
-
+            # Check for exit conditions if in a position
+            if in_position:
                 lot_size = 50
-                price_change = row['close'] - entry_trade['entry_price']
+                price_change = row['close'] - current_trade['entry_price']
 
-                if entry_trade['type'] == 'SELL_PUT_SPREAD':
+                if current_trade['type'] == 'SELL_PUT_SPREAD':
                     pnl = price_change * 0.3 * lot_size
-                else:
+                else: # SELL_CALL_SPREAD
                     pnl = -price_change * 0.3 * lot_size
 
+                # Check for stop-loss or take-profit
                 if pnl <= -stop_loss or pnl >= target:
-                    entry_trade['exit_price'] = row['close']
-                    entry_trade['exit_time'] = row['date']
-                    entry_trade['pnl'] = pnl
-                    all_trades.append(entry_trade)
-                    position_active = False
+                    current_trade['exit_price'] = row['close']
+                    current_trade['exit_time'] = row['date']
+                    current_trade['pnl'] = pnl
+                    all_trades.append(current_trade)
+                    in_position = False
+                    current_trade = {}
 
-            if position_active:
-                last_row = trade_day_df.iloc[-1]
-                price_change = last_row['close'] - entry_trade['entry_price']
-                if entry_trade['type'] == 'SELL_PUT_SPREAD':
-                    pnl = price_change * 0.3 * lot_size
-                else:
-                    pnl = -price_change * 0.3 * lot_size
+            # Check for entry conditions if not in a position
+            if not in_position:
+                # Upper band breakout
+                if row['close'] > row['upper_band']:
+                    in_position = True
+                    current_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date']}
+                # Lower band breakout
+                elif row['close'] < row['lower_band']:
+                    in_position = True
+                    current_trade = {"type": "SELL_CALL_SPREAD", "entry_price": row['close'], "entry_time": row['date']}
 
-                entry_trade['exit_price'] = last_row['close']
-                entry_trade['exit_time'] = last_row['date']
-                entry_trade['pnl'] = pnl
-                all_trades.append(entry_trade)
+        # End of day check: close any open position
+        if in_position:
+            last_row = trade_day_df.iloc[-1]
+            price_change = last_row['close'] - current_trade['entry_price']
+            if current_trade['type'] == 'SELL_PUT_SPREAD':
+                pnl = price_change * 0.3 * lot_size
+            else:
+                pnl = -price_change * 0.3 * lot_size
+
+            current_trade['exit_price'] = last_row['close']
+            current_trade['exit_time'] = last_row['date']
+            current_trade['pnl'] = pnl
+            all_trades.append(current_trade)
 
     total_pnl = sum(trade['pnl'] for trade in all_trades)
 
