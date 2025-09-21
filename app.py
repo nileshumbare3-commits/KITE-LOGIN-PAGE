@@ -13,6 +13,24 @@ api_secret = "YOUR_API_SECRET"
 
 kite = KiteConnect(api_key=api_key)
 
+# --- Instrument Caching and Search (In-Memory) ---
+instrument_cache = None
+
+def update_instrument_cache():
+    """Fetches and caches the instrument list in a global variable."""
+    global instrument_cache
+    try:
+        # The access token must be set before making this API call
+        kite.set_access_token(session["access_token"])
+        instruments = kite.instruments()
+        instrument_cache = pd.DataFrame(instruments)
+        print(f"Successfully cached {len(instrument_cache)} instruments in memory.")
+    except Exception as e:
+        print(f"Error caching instruments: {e}")
+        instrument_cache = None # Reset cache on error
+
+# --- Routes ---
+
 @app.route("/")
 def index():
     if "access_token" in session:
@@ -32,6 +50,10 @@ def callback():
     try:
         data = kite.generate_session(request_token, api_secret=api_secret)
         session["access_token"] = data["access_token"]
+
+        # Update instrument cache on every successful login
+        update_instrument_cache()
+
         return redirect("/home")
     except Exception as e:
         return f"Error: {e}"
@@ -73,39 +95,25 @@ def backtest():
 
     return render_template("backtest.html", results=None)
 
-# --- Instrument Caching and Search ---
-
-@app.route("/api/update-instruments")
-def update_instruments():
-    if "access_token" not in session:
-        return "Error: You must be logged in to update the instrument list.", 401
-
-    try:
-        kite.set_access_token(session["access_token"])
-        instruments = kite.instruments()
-        df = pd.DataFrame(instruments)
-        df.to_csv("instance/instruments.csv", index=False)
-        return f"Successfully updated and cached {len(df)} instruments."
-    except Exception as e:
-        return f"Error updating instruments: {e}", 500
-
 @app.route("/api/search-instruments")
 def search_instruments():
+    global instrument_cache
     query = request.args.get("q", "").upper()
+
+    if instrument_cache is None:
+        return jsonify({"error": "Instrument list not cached. Please log in again."}), 503
+
     if not query:
         return jsonify([])
 
     try:
-        df = pd.read_csv("instance/instruments.csv")
-        # Search for NFO instruments containing the query
-        mask = (df['tradingsymbol'].str.contains(query)) & (df['exchange'] == 'NFO')
-        results = df[mask].head(10) # Limit results to 10
+        mask = (instrument_cache['tradingsymbol'].str.contains(query)) & (instrument_cache['exchange'] == 'NFO')
+        results = instrument_cache[mask].head(10)
         return jsonify(results.to_dict(orient="records"))
-    except FileNotFoundError:
-        return jsonify({"error": "Instrument cache not found. Please log in and visit /api/update-instruments first."}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# --- Backtesting Logic ---
 
 def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target):
     """
