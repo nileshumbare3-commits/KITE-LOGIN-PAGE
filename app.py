@@ -133,7 +133,11 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
         trade_day_df = day_df[day_df['date'].dt.time >= pd.to_datetime("09:30").time()].copy()
         if trade_day_df.empty: continue
 
-        # --- Final Custom VWAP High/Low Band Calculation ---
+        # --- Final, Combined Logic ---
+        first_candle = trade_day_df.iloc[0]
+        opening_range_high = first_candle['high']
+        opening_range_low = first_candle['low']
+
         trade_day_df.loc[:, 'cum_volume'] = trade_day_df['volume'].cumsum()
         trade_day_df.loc[:, 'cum_volume_high'] = (trade_day_df['high'] * trade_day_df['volume']).cumsum()
         trade_day_df.loc[:, 'vwap_high'] = trade_day_df['cum_volume_high'] / trade_day_df['cum_volume']
@@ -181,11 +185,12 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
 
             if not in_position:
                 def get_strike(price): return round(price / 50) * 50
-                if row['close'] > row['upper_band'] and row['open'] < row['upper_band']:
+                # Final Entry Logic with Opening Range Filter
+                if row['close'] > row['upper_band'] and row['open'] < row['upper_band'] and row['close'] > opening_range_high:
                     in_position, strike = True, get_strike(row['close'])
                     current_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} PE"}
                     high_water_mark = row['close']
-                elif row['close'] < row['lower_band'] and row['open'] > row['lower_band']:
+                elif row['close'] < row['lower_band'] and row['open'] > row['lower_band'] and row['close'] < opening_range_low:
                     in_position, strike = True, get_strike(row['close'])
                     current_trade = {"type": "SELL_CALL_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} CE"}
                     low_water_mark = row['close']
