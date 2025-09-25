@@ -88,6 +88,8 @@
                             <label for="tsl_ema_period">EMA Period</label>
                             <input type="number" id="tsl_ema_period" name="tsl_ema_period" value="9">
                         </div>
+                        <br>
+                        <label><input type="radio" name="tsl_mode" value="band"> VWAP Band</label>
                     </div>
                 </div>
 
@@ -206,13 +208,9 @@
 
         tslModeRadios.forEach(radio => {
             radio.addEventListener('change', (e) => {
-                if (e.target.value === 'fixed') {
-                    tslFixedParamsDiv.style.display = 'block';
-                    tslEmaParamsDiv.style.display = 'none';
-                } else {
-                    tslFixedParamsDiv.style.display = 'none';
-                    tslEmaParamsDiv.style.display = 'block';
-                }
+                const mode = e.target.value;
+                tslFixedParamsDiv.style.display = (mode === 'fixed') ? 'block' : 'none';
+                tslEmaParamsDiv.style.display = (mode === 'ema') ? 'block' : 'none';
             });
         });
     </script>

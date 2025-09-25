@@ -24,7 +24,6 @@ def update_instrument_cache():
         kite.set_access_token(session["access_token"])
         instruments = kite.instruments()
         instrument_cache = pd.DataFrame(instruments)
-        print(f"Successfully cached {len(instrument_cache)} instruments in memory.")
     except Exception as e:
         print(f"Error caching instruments: {e}")
         instrument_cache = None
@@ -133,19 +132,16 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
         trade_day_df = day_df[day_df['date'].dt.time >= pd.to_datetime("09:30").time()].copy()
         if trade_day_df.empty: continue
 
-        # --- Final, Combined Logic ---
+        # --- Final, Correct Band Calculation Logic ---
         first_candle = trade_day_df.iloc[0]
         opening_range_high = first_candle['high']
         opening_range_low = first_candle['low']
 
         trade_day_df.loc[:, 'cum_volume'] = trade_day_df['volume'].cumsum()
         trade_day_df.loc[:, 'cum_volume_high'] = (trade_day_df['high'] * trade_day_df['volume']).cumsum()
-        trade_day_df.loc[:, 'vwap_high'] = trade_day_df['cum_volume_high'] / trade_day_df['cum_volume']
+        trade_day_df.loc[:, 'upper_band'] = trade_day_df['cum_volume_high'] / trade_day_df['cum_volume']
         trade_day_df.loc[:, 'cum_volume_low'] = (trade_day_df['low'] * trade_day_df['volume']).cumsum()
-        trade_day_df.loc[:, 'vwap_low'] = trade_day_df['cum_volume_low'] / trade_day_df['cum_volume']
-        trade_day_df.loc[:, 'std_dev'] = trade_day_df['close'].expanding().std()
-        trade_day_df.loc[:, 'upper_band'] = trade_day_df['vwap_high'] + trade_day_df['std_dev']
-        trade_day_df.loc[:, 'lower_band'] = trade_day_df['vwap_low'] - trade_day_df['std_dev']
+        trade_day_df.loc[:, 'lower_band'] = trade_day_df['cum_volume_low'] / trade_day_df['cum_volume']
 
         if use_tsl and tsl_mode == 'ema':
             trade_day_df.loc[:, 'tsl_ema'] = trade_day_df['close'].ewm(span=tsl_ema_period, adjust=False).mean()
@@ -166,12 +162,22 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
                 if pnl >= target: exit_condition_met = True
                 elif use_tsl:
                     if current_trade['type'] == 'SELL_PUT_SPREAD':
-                        high_water_mark = max(high_water_mark, row['close'])
-                        tsl_price = high_water_mark - tsl_fixed_amount if tsl_mode == 'fixed' else row['tsl_ema']
+                        if tsl_mode == 'fixed':
+                            high_water_mark = max(high_water_mark, row['close'])
+                            tsl_price = high_water_mark - tsl_fixed_amount
+                        elif tsl_mode == 'ema':
+                            tsl_price = row['tsl_ema']
+                        else: # Band mode
+                            tsl_price = row['lower_band']
                         if row['close'] < tsl_price: exit_condition_met = True
-                    else:
-                        low_water_mark = min(low_water_mark, row['close'])
-                        tsl_price = low_water_mark + tsl_fixed_amount if tsl_mode == 'fixed' else row['tsl_ema']
+                    else: # Bearish trade
+                        if tsl_mode == 'fixed':
+                            low_water_mark = min(low_water_mark, row['close'])
+                            tsl_price = low_water_mark + tsl_fixed_amount
+                        elif tsl_mode == 'ema':
+                            tsl_price = row['tsl_ema']
+                        else: # Band mode
+                            tsl_price = row['upper_band']
                         if row['close'] > tsl_price: exit_condition_met = True
                 elif pnl <= -stop_loss: exit_condition_met = True
 
@@ -185,7 +191,6 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
 
             if not in_position:
                 def get_strike(price): return round(price / 50) * 50
-                # Final Entry Logic with Opening Range Filter
                 if row['close'] > row['upper_band'] and row['open'] < row['upper_band'] and row['close'] > opening_range_high:
                     in_position, strike = True, get_strike(row['close'])
                     current_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} PE"}
