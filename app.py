@@ -96,6 +96,21 @@ def backtest():
             return render_template("backtest.html", error=str(e))
     return render_template("backtest.html", results=None)
 
+@app.route("/scanner", methods=["GET", "POST"])
+def scanner():
+    if "access_token" not in session:
+        return redirect("/")
+
+    if request.method == "POST":
+        try:
+            results = run_scanner()
+            return render_template("scanner.html", results=results)
+        except Exception as e:
+            return render_template("scanner.html", error=str(e))
+
+    return render_template("scanner.html", results=None)
+
+
 @app.route("/api/search-instruments")
 def search_instruments():
     global instrument_cache
@@ -111,8 +126,89 @@ def search_instruments():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- Backtesting Logic ---
+# --- Scanner Logic ---
+def run_scanner():
+    """
+    Scans F&O stocks to find ones where the LTP is near the highest OI strike.
+    """
+    global instrument_cache
+    if instrument_cache is None:
+        raise Exception("Instrument cache is not available. Please log in again.")
 
+    kite.set_access_token(session["access_token"])
+
+    # 1. Filter for F&O stock options
+    nfo_options = instrument_cache[instrument_cache['segment'] == 'NFO-OPT'].copy()
+    excluded_symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']
+    nfo_options = nfo_options[~nfo_options['name'].isin(excluded_symbols)]
+
+    # 2. Find the single nearest monthly expiry date
+    nfo_options['expiry'] = pd.to_datetime(nfo_options['expiry'])
+    future_expiries = nfo_options[nfo_options['expiry'] > datetime.now()].sort_values('expiry')
+    if future_expiries.empty:
+        return []
+    nearest_expiry = future_expiries['expiry'].min()
+
+    # 3. Filter options for that nearest expiry
+    target_options = nfo_options[nfo_options['expiry'] == nearest_expiry]
+
+    # 4. Get all unique underlying stock symbols and their tokens
+    underlying_symbols = target_options['name'].unique()
+    equity_instruments = instrument_cache[
+        (instrument_cache['name'].isin(underlying_symbols)) &
+        (instrument_cache['exchange'] == 'NSE')
+    ]
+    # Create a mapping from stock name to its exchange token (e.g., 'RELIANCE' -> 'NSE:RELIANCE')
+    equity_tokens = {inst['name']: f"{inst['exchange']}:{inst['tradingsymbol']}" for _, inst in equity_instruments.iterrows()}
+
+    if not equity_tokens:
+        return []
+
+    # 5. Get LTP for all underlying stocks in a single batch call
+    ltp_data = kite.ltp(list(equity_tokens.values()))
+
+    found_stocks = []
+
+    # 6. Group options by stock symbol and process each group
+    for symbol, group in target_options.groupby('name'):
+        ltp_info = ltp_data.get(equity_tokens.get(symbol))
+        if not ltp_info:
+            continue
+        ltp = ltp_info['last_price']
+
+        calls = group[group['instrument_type'] == 'CE']
+        puts = group[group['instrument_type'] == 'PE']
+
+        if calls.empty or puts.empty:
+            continue
+
+        # Find highest OI strikes
+        high_oi_call = calls.loc[calls['open_interest'].idxmax()]
+        high_oi_put = puts.loc[puts['open_interest'].idxmax()]
+
+        call_strike = high_oi_call['strike']
+        put_strike = high_oi_put['strike']
+
+        # 7. Check condition and add to results
+        reason = ""
+        if abs(ltp - call_strike) / call_strike <= 0.01:
+            reason = f"LTP is within 1% of the highest OI Call strike ({call_strike})"
+        elif abs(ltp - put_strike) / put_strike <= 0.01:
+            reason = f"LTP is within 1% of the highest OI Put strike ({put_strike})"
+
+        if reason:
+            found_stocks.append({
+                "symbol": symbol,
+                "ltp": ltp,
+                "high_oi_call_strike": call_strike,
+                "high_oi_put_strike": put_strike,
+                "reason": reason
+            })
+
+    return found_stocks
+
+
+# --- Backtesting Logic ---
 def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target,
                  use_tsl, tsl_mode, tsl_fixed_amount, tsl_ema_period, timeframe, allow_reentry):
     kite.set_access_token(session["access_token"])
@@ -132,7 +228,6 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
         trade_day_df = day_df[day_df['date'].dt.time >= pd.to_datetime("09:30").time()].copy()
         if trade_day_df.empty: continue
 
-        # --- Final, Correct Band Calculation Logic ---
         first_candle = trade_day_df.iloc[0]
         opening_range_high = first_candle['high']
         opening_range_low = first_candle['low']
