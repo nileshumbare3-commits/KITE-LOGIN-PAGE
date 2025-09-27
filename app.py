@@ -130,50 +130,52 @@ def search_instruments():
 # --- Scanner Logic ---
 def run_scanner(proximity_percent=1.0):
     """
-    Scans F&O stocks with batching and more robust logic.
+    FINAL DEBUG VERSION: Scans F&O stocks with extensive logging.
     """
+    print("\n--- NEW SCANNER RUN ---")
+    print(f"Proximity: {proximity_percent}%")
+
     global instrument_cache
     if instrument_cache is None:
         raise Exception("Instrument cache is not available. Please log in again.")
 
     kite.set_access_token(session["access_token"])
 
-    # 1. Filter for F&O stock options
     nfo_options = instrument_cache[instrument_cache['segment'] == 'NFO-OPT'].copy()
     excluded_symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']
     nfo_options = nfo_options[~nfo_options['name'].isin(excluded_symbols)]
 
-    # 2. Find the single nearest monthly expiry date
     nfo_options['expiry'] = pd.to_datetime(nfo_options['expiry'])
     future_expiries = nfo_options[nfo_options['expiry'] > datetime.now()].sort_values('expiry')
-    if future_expiries.empty: return []
+    if future_expiries.empty:
+        return []
     nearest_expiry = future_expiries['expiry'].min()
 
-    # 3. Filter options for that nearest expiry
     target_options = nfo_options[nfo_options['expiry'] == nearest_expiry]
 
-    # 4. Get all unique underlying stock symbols and map them to their NSE instrument tokens
     underlying_symbols = target_options['name'].unique()
     equity_instruments = instrument_cache[
         (instrument_cache['name'].isin(underlying_symbols)) &
         (instrument_cache['exchange'] == 'NSE') &
         (instrument_cache['instrument_type'] == 'EQ')
     ]
-    equity_tokens = {inst['name']: f"NSE:{inst['tradingsymbol']}" for _, inst in equity_instruments.iterrows()}
+    equity_tokens = {inst['name']: f"{inst['exchange']}:{inst['tradingsymbol']}" for _, inst in equity_instruments.iterrows()}
 
-    # 5. Fetch LTPs in batches
+    if not equity_tokens:
+        return []
+
     ltp_data = {}
     token_list = list(equity_tokens.values())
-    batch_size = 100
+    batch_size = 200
     for i in range(0, len(token_list), batch_size):
         batch = token_list[i:i + batch_size]
         ltp_data.update(kite.ltp(batch))
-        print(f"Fetched LTP for batch {i//batch_size + 1}")
+        print(f"Fetched LTP for batch {i//batch_size + 1}...")
 
     found_stocks = []
     proximity_decimal = proximity_percent / 100.0
 
-    # 6. Group options by stock symbol and process each group
+    print("\n--- Processing Stocks ---")
     for symbol, group in target_options.groupby('name'):
         equity_token_str = equity_tokens.get(symbol)
         if not equity_token_str: continue
@@ -193,13 +195,20 @@ def run_scanner(proximity_percent=1.0):
         call_strike = high_oi_call['strike']
         put_strike = high_oi_put['strike']
 
+        # Final detailed check
+        call_diff = abs(ltp - call_strike) / call_strike
+        put_diff = abs(ltp - put_strike) / put_strike
+
+        print(f" - {symbol}: LTP={ltp:.2f}, CallStrike={call_strike}, Diff={call_diff:.4f} | PutStrike={put_strike}, Diff={put_diff:.4f}")
+
         reason = ""
-        if abs(ltp - call_strike) / call_strike <= proximity_decimal:
+        if call_diff <= proximity_decimal:
             reason = f"LTP is within {proximity_percent}% of the highest OI Call strike ({call_strike})"
-        elif abs(ltp - put_strike) / put_strike <= proximity_decimal:
+        elif put_diff <= proximity_decimal:
             reason = f"LTP is within {proximity_percent}% of the highest OI Put strike ({put_strike})"
 
         if reason:
+            print(f"   *** FOUND MATCH: {symbol} ***")
             found_stocks.append({
                 "symbol": symbol,
                 "ltp": ltp,
@@ -207,7 +216,7 @@ def run_scanner(proximity_percent=1.0):
                 "high_oi_put_strike": put_strike,
                 "reason": reason
             })
-
+    print("--- SCANNER RUN COMPLETE ---")
     return found_stocks
 
 
