@@ -130,27 +130,39 @@ def search_instruments():
 # --- Scanner Logic ---
 def run_scanner(proximity_percent=1.0):
     """
-    Scans F&O stocks to find ones where the LTP is near the highest OI strike.
+    DEBUG VERSION: Scans F&O stocks with extensive logging.
     """
+    print("\n--- NEW SCANNER RUN ---")
+    print(f"Proximity: {proximity_percent}%")
+
     global instrument_cache
     if instrument_cache is None:
         raise Exception("Instrument cache is not available. Please log in again.")
 
     kite.set_access_token(session["access_token"])
 
+    print("1. Filtering for F&O stock options...")
     nfo_options = instrument_cache[instrument_cache['segment'] == 'NFO-OPT'].copy()
     excluded_symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']
     nfo_options = nfo_options[~nfo_options['name'].isin(excluded_symbols)]
+    print(f"   Found {len(nfo_options)} total F&O stock option contracts.")
 
+    print("2. Finding nearest monthly expiry date...")
     nfo_options['expiry'] = pd.to_datetime(nfo_options['expiry'])
     future_expiries = nfo_options[nfo_options['expiry'] > datetime.now()].sort_values('expiry')
     if future_expiries.empty:
+        print("   No future expiries found. Exiting.")
         return []
     nearest_expiry = future_expiries['expiry'].min()
+    print(f"   Nearest expiry date found: {nearest_expiry.date()}")
 
+    print("3. Filtering options for that nearest expiry...")
     target_options = nfo_options[nfo_options['expiry'] == nearest_expiry]
+    print(f"   Found {len(target_options)} contracts for the {nearest_expiry.date()} expiry.")
 
     underlying_symbols = target_options['name'].unique()
+    print(f"4. Found {len(underlying_symbols)} unique underlying stock symbols.")
+
     equity_instruments = instrument_cache[
         (instrument_cache['name'].isin(underlying_symbols)) &
         (instrument_cache['exchange'] == 'NSE')
@@ -158,17 +170,21 @@ def run_scanner(proximity_percent=1.0):
     equity_tokens = {inst['name']: f"{inst['exchange']}:{inst['tradingsymbol']}" for _, inst in equity_instruments.iterrows()}
 
     if not equity_tokens:
+        print("   Could not map any equity tokens. Exiting.")
         return []
 
+    print(f"5. Fetching LTP for {len(equity_tokens)} underlying stocks...")
     ltp_data = kite.ltp(list(equity_tokens.values()))
+    print("   LTP data received.")
 
     found_stocks = []
-
     proximity_decimal = proximity_percent / 100.0
 
+    print("6. Processing each stock...")
     for symbol, group in target_options.groupby('name'):
         ltp_info = ltp_data.get(equity_tokens.get(symbol))
         if not ltp_info or ltp_info.get('last_price') is None:
+            print(f" - Skipping {symbol}: No LTP data found.")
             continue
         ltp = ltp_info['last_price']
 
@@ -176,6 +192,7 @@ def run_scanner(proximity_percent=1.0):
         puts = group[group['instrument_type'] == 'PE']
 
         if calls.empty or puts.empty:
+            print(f" - Skipping {symbol}: Missing Call or Put options.")
             continue
 
         high_oi_call = calls.loc[calls['open_interest'].idxmax()]
@@ -184,6 +201,8 @@ def run_scanner(proximity_percent=1.0):
         call_strike = high_oi_call['strike']
         put_strike = high_oi_put['strike']
 
+        print(f" - {symbol} | LTP: {ltp:.2f} | High OI Call: {call_strike} | High OI Put: {put_strike}")
+
         reason = ""
         if abs(ltp - call_strike) / call_strike <= proximity_decimal:
             reason = f"LTP is within {proximity_percent}% of the highest OI Call strike ({call_strike})"
@@ -191,6 +210,7 @@ def run_scanner(proximity_percent=1.0):
             reason = f"LTP is within {proximity_percent}% of the highest OI Put strike ({put_strike})"
 
         if reason:
+            print(f"   *** FOUND MATCH: {symbol} - {reason} ***")
             found_stocks.append({
                 "symbol": symbol,
                 "ltp": ltp,
@@ -199,6 +219,7 @@ def run_scanner(proximity_percent=1.0):
                 "reason": reason
             })
 
+    print("--- SCANNER RUN COMPLETE ---")
     return found_stocks
 
 
