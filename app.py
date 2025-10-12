@@ -320,6 +320,9 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
     summary = {"win_percentage": (len(winning_trades) / len(all_trades) * 100) if all_trades else 0, "avg_profit_win": sum(t['pnl'] for t in winning_trades) / len(winning_trades) if winning_trades else 0, "avg_loss_lose": sum(t['pnl'] for t in losing_trades) / len(losing_trades) if losing_trades else 0}
     return {"trades": all_trades, "total_pnl": total_pnl, "summary": summary}
 
+if __name__ == "__main__":
+    app.run(debug=True)
+
 @app.route("/nifty_rsi_backtest", methods=["GET", "POST"])
 def nifty_rsi_backtest():
     if "access_token" not in session:
@@ -360,18 +363,22 @@ def run_nifty_bees_rsi_backtest(from_date_str, to_date_str):
         raise Exception("Could not fetch instrument list.")
 
     try:
+        # More specific instrument lookup to prevent errors
         nifty_50_instrument = instrument_cache[
             (instrument_cache['name'] == 'NIFTY 50') &
-            (instrument_cache['instrument_type'] == 'INDEX')
+            (instrument_cache['instrument_type'] == 'INDEX') &
+            (instrument_cache['exchange'] == 'NSE')
         ].iloc[0]
+
         nifty_bees_instrument = instrument_cache[
             (instrument_cache['tradingsymbol'] == 'NIFTYBEES') &
+            (instrument_cache['instrument_type'] == 'ETF') &
             (instrument_cache['exchange'] == 'NSE')
         ].iloc[0]
         nifty_50_token = nifty_50_instrument['instrument_token']
         nifty_bees_token = nifty_bees_instrument['instrument_token']
     except IndexError:
-        raise Exception("Could not find NIFTY 50 or NIFTYBEES instruments. Please ensure you have access.")
+        raise Exception("Could not find NIFTY 50 (INDEX, NSE) or NIFTYBEES (ETF, NSE) in your instrument list. Please ensure your API account has access to these instruments.")
 
 
     # --- Fetch Historical Data ---
@@ -467,6 +474,3 @@ def run_nifty_bees_rsi_backtest(from_date_str, to_date_str):
         "average_profit_per_trade": average_profit_per_trade,
         "total_profit": total_profit
     }
-
-if __name__ == "__main__":
-    app.run(debug=True)
