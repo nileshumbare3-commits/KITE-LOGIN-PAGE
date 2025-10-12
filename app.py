@@ -320,5 +320,153 @@ def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target
     summary = {"win_percentage": (len(winning_trades) / len(all_trades) * 100) if all_trades else 0, "avg_profit_win": sum(t['pnl'] for t in winning_trades) / len(winning_trades) if winning_trades else 0, "avg_loss_lose": sum(t['pnl'] for t in losing_trades) / len(losing_trades) if losing_trades else 0}
     return {"trades": all_trades, "total_pnl": total_pnl, "summary": summary}
 
+@app.route("/nifty_rsi_backtest", methods=["GET", "POST"])
+def nifty_rsi_backtest():
+    if "access_token" not in session:
+        return redirect("/")
+    if request.method == "POST":
+        try:
+            from_date_str = request.form.get("from_date")
+            to_date_str = request.form.get("to_date")
+            results = run_nifty_bees_rsi_backtest(from_date_str, to_date_str)
+            return render_template("nifty_rsi_backtest.html", results=results)
+        except Exception as e:
+            return render_template("nifty_rsi_backtest.html", error=str(e))
+    return render_template("nifty_rsi_backtest.html", results=None)
+
+# --- Nifty Bees RSI Backtesting Logic ---
+def run_nifty_bees_rsi_backtest(from_date_str, to_date_str):
+    """
+    Backtests the Nifty Bees RSI strategy.
+    """
+    kite.set_access_token(session["access_token"])
+    from_date = datetime.strptime(from_date_str, "%Y-%m-%d")
+    to_date = datetime.strptime(to_date_str, "%Y-%m-%d")
+
+    # --- Helper Function to Calculate RSI ---
+    def calculate_rsi(data, period=14):
+        delta = data['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    # --- Find Instrument Tokens ---
+    global instrument_cache
+    if instrument_cache is None:
+        update_instrument_cache() # Make sure cache is populated
+    if instrument_cache is None:
+        raise Exception("Could not fetch instrument list.")
+
+    try:
+        nifty_50_instrument = instrument_cache[
+            (instrument_cache['name'] == 'NIFTY 50') &
+            (instrument_cache['instrument_type'] == 'INDEX')
+        ].iloc[0]
+        nifty_bees_instrument = instrument_cache[
+            (instrument_cache['tradingsymbol'] == 'NIFTYBEES') &
+            (instrument_cache['exchange'] == 'NSE')
+        ].iloc[0]
+        nifty_50_token = nifty_50_instrument['instrument_token']
+        nifty_bees_token = nifty_bees_instrument['instrument_token']
+    except IndexError:
+        raise Exception("Could not find NIFTY 50 or NIFTYBEES instruments. Please ensure you have access.")
+
+
+    # --- Fetch Historical Data ---
+    nifty_50_hist = kite.historical_data(nifty_50_token, from_date, to_date + timedelta(days=1), "60minute")
+    nifty_bees_hist = kite.historical_data(nifty_bees_token, from_date, to_date + timedelta(days=1), "60minute")
+
+    if not nifty_50_hist or not nifty_bees_hist:
+        raise Exception("Could not fetch historical data.")
+
+    nifty_50_df = pd.DataFrame(nifty_50_hist)
+    nifty_50_df['date'] = pd.to_datetime(nifty_50_df['date'])
+    nifty_bees_df = pd.DataFrame(nifty_bees_hist)
+    nifty_bees_df['date'] = pd.to_datetime(nifty_bees_df['date'])
+
+    # --- Prepare Data ---
+    nifty_50_df['rsi'] = calculate_rsi(nifty_50_df)
+    # Merge dataframes on the timestamp to align signals and prices
+    df = pd.merge(nifty_50_df[['date', 'rsi']], nifty_bees_df[['date', 'open', 'high', 'low', 'close']], on='date', how='inner')
+    df = df.dropna().reset_index(drop=True)
+
+    # --- Backtesting Loop ---
+    all_trades = []
+    current_holdings = []
+    max_capital_utilized = 0
+    INVESTMENT_AMOUNT = 50000
+
+    for i in range(len(df)):
+        current_price = df.loc[i, 'close']
+        current_rsi = df.loc[i, 'rsi']
+        current_date = df.loc[i, 'date']
+
+        # 1. Check Exit Condition (Profit Taking)
+        if current_holdings:
+            total_investment = sum(h['value'] for h in current_holdings)
+            total_quantity = sum(h['quantity'] for h in current_holdings)
+            current_value = total_quantity * current_price
+            pnl_percent = ((current_value - total_investment) / total_investment) * 100
+
+            if pnl_percent >= 3.0:
+                # Exit the entire position
+                for holding in current_holdings:
+                    trade = {
+                        "entry_price": holding['price'],
+                        "entry_date": holding['date'],
+                        "quantity": holding['quantity'],
+                        "exit_price": current_price,
+                        "exit_date": current_date,
+                        "period_of_holding": current_date - holding['date']
+                    }
+                    all_trades.append(trade)
+                current_holdings = [] # Clear holdings
+
+        # 2. Check Averaging Down Condition
+        if current_holdings:
+            last_purchase_price = current_holdings[-1]['price']
+            drawdown_percent = ((current_price - last_purchase_price) / last_purchase_price) * 100
+
+            if drawdown_percent <= -3.0:
+                 # Buy more
+                quantity = INVESTMENT_AMOUNT / current_price
+                current_holdings.append({
+                    "price": current_price,
+                    "quantity": quantity,
+                    "date": current_date,
+                    "value": INVESTMENT_AMOUNT
+                })
+                total_investment = sum(h['value'] for h in current_holdings)
+                max_capital_utilized = max(max_capital_utilized, total_investment)
+
+
+        # 3. Check Entry Condition
+        if not current_holdings and current_rsi < 80:
+            quantity = INVESTMENT_AMOUNT / current_price
+            current_holdings.append({
+                "price": current_price,
+                "quantity": quantity,
+                "date": current_date,
+                "value": INVESTMENT_AMOUNT
+            })
+            total_investment = sum(h['value'] for h in current_holdings)
+            max_capital_utilized = max(max_capital_utilized, total_investment)
+
+    # --- Final calculations ---
+    total_profit = 0
+    for trade in all_trades:
+        total_profit += (trade['exit_price'] - trade['entry_price']) * trade['quantity']
+
+    average_profit_per_trade = total_profit / len(all_trades) if all_trades else 0
+
+    return {
+        "trades": all_trades,
+        "max_capital_utilized": max_capital_utilized,
+        "average_profit_per_trade": average_profit_per_trade,
+        "total_profit": total_profit
+    }
+
 if __name__ == "__main__":
     app.run(debug=True)

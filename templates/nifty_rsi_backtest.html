@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Nifty Bees RSI Backtest</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>Nifty Bees RSI Backtest</h1>
+        <p>
+            This backtest simulates a strategy where you invest ₹50,000 in Nifty Bees
+            when the 1-hour RSI of Nifty 50 goes below 80.
+            If the investment goes down by 3% from the last purchase price, another ₹50,000 is invested.
+            The entire position is exited when a 3% profit target is reached.
+        </p>
+
+        <form method="POST" class="mt-4">
+            <div class="form-row">
+                <div class="form-group col-md-4">
+                    <label for="from_date">From Date</label>
+                    <input type="date" class="form-control" id="from_date" name="from_date" required>
+                </div>
+                <div class="form-group col-md-4">
+                    <label for="to_date">To Date</label>
+                    <input type="date" class="form-control" id="to_date" name="to_date" required>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Run Backtest</button>
+        </form>
+
+        {% if error %}
+            <div class="alert alert-danger mt-4">{{ error }}</div>
+        {% endif %}
+
+        {% if results %}
+            <h2 class="mt-5">Backtest Results</h2>
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h5 class="card-title">Summary</h5>
+                    <p><strong>Total Profit:</strong> ₹{{ "%.2f"|format(results.total_profit) }}</p>
+                    <p><strong>Max Capital Utilized:</strong> ₹{{ "%.2f"|format(results.max_capital_utilized) }}</p>
+                    <p><strong>Average Profit per Trade:</strong> ₹{{ "%.2f"|format(results.average_profit_per_trade) }}</p>
+                </div>
+            </div>
+
+            <h3 class="mt-5">All Trades</h3>
+            <table class="table table-striped mt-3">
+                <thead>
+                    <tr>
+                        <th>Entry Date</th>
+                        <th>Entry Price</th>
+                        <th>Quantity</th>
+                        <th>Exit Date</th>
+                        <th>Exit Price</th>
+                        <th>Holding Period</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in results.trades %}
+                        <tr>
+                            <td>{{ trade.entry_date.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>{{ "%.2f"|format(trade.entry_price) }}</td>
+                            <td>{{ "%.2f"|format(trade.quantity) }}</td>
+                            <td>{{ trade.exit_date.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>{{ "%.2f"|format(trade.exit_price) }}</td>
+                            <td>{{ trade.period_of_holding }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endif %}
+    </div>
+</body>
+</html>
