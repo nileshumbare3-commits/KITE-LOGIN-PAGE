@@ -365,13 +365,13 @@ def run_nifty_bees_rsi_backtest(from_date_str, to_date_str):
     try:
         # More specific instrument lookup to prevent errors
         nifty_50_instrument = instrument_cache[
-            (instrument_cache['name'] == 'NIFTY 50') &
+            (instrument_cache['name'] == 'Nifty 50') &
             (instrument_cache['instrument_type'] == 'INDEX') &
             (instrument_cache['exchange'] == 'NSE')
         ].iloc[0]
 
         nifty_bees_instrument = instrument_cache[
-            (instrument_cache['tradingsymbol'] == 'NIFTYBEES') &
+            (instrument_cache['tradingsymbol'] == 'Nifty BeES') &
             (instrument_cache['instrument_type'] == 'ETF') &
             (instrument_cache['exchange'] == 'NSE')
         ].iloc[0]
