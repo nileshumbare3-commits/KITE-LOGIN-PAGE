@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Option Intraday Backtesting</title>
+    <title>Backtesting</title>
     <style>
         body { font-family: sans-serif; margin: 2em; }
         .container { max-width: 1200px; margin: auto; }
@@ -25,7 +25,7 @@
         .autocomplete-results { position: absolute; border: 1px solid #ddd; border-top: none; z-index: 99; top: 100%; left: 0; right: 0; background-color: white; }
         .autocomplete-results div { padding: 10px; cursor: pointer; }
         .autocomplete-results div:hover { background-color: #f2f2f2; }
-        .tsl-options { border: 1px solid #eee; padding: 15px; margin-top: 10px; border-radius: 4px; }
+        .strategy-params { border: 1px solid #eee; padding: 15px; margin-top: 10px; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -37,11 +37,20 @@
             <a href="/logout" style="float: right;">Logout</a>
         </div>
 
-        <h1>Option Intraday Backtesting</h1>
+        <h1>Backtesting</h1>
 
         <div class="form-container">
             <h2>Strategy Configuration</h2>
             <form method="POST" action="/backtest">
+                <!-- COMMON PARAMETERS -->
+                <div class="form-group">
+                    <label for="strategy">Strategy</label>
+                    <select id="strategy" name="strategy">
+                        {% for key, value in strategies.items() %}
+                            <option value="{{ key }}" {% if selected_strategy == key %}selected{% endif %}>{{ value.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
                 <div class="form-group">
                     <label for="instrument_search">Search Instrument (e.g., NIFTY FUT)</label>
                     <input type="text" id="instrument_search" name="instrument_search" autocomplete="off" required>
@@ -66,36 +75,48 @@
                     <label for="to_date">To Date</label>
                     <input type="date" id="to_date" name="to_date" required>
                 </div>
-                <div class="form-group">
-                    <label for="stop_loss">Initial Stop Loss (₹)</label>
-                    <input type="number" id="stop_loss" name="stop_loss" value="1500">
-                </div>
-                <div class="form-group">
-                    <label for="target">Target (₹)</label>
-                    <input type="number" id="target" name="target" value="4500">
-                </div>
 
-                <div class="form-group">
-                    <label><input type="checkbox" id="use_tsl" name="use_tsl" value="true"> Use Trailing Stop Loss</label>
-                    <div id="tsl_options" class="tsl-options" style="display: none;">
-                        <label><input type="radio" name="tsl_mode" value="fixed" checked> Fixed</label>
-                        <div id="tsl_fixed_params">
-                            <label for="tsl_fixed_amount">Trail Amount (points)</label>
-                            <input type="number" id="tsl_fixed_amount" name="tsl_fixed_amount" value="20">
+                <!-- STRATEGY-SPECIFIC PARAMETERS -->
+                <div id="strategy-parameters">
+                    <!-- Opening Range Breakout Parameters -->
+                    <div id="opening_range_breakout_strategy_params" class="strategy-params">
+                        <h4>Opening Range Breakout Parameters</h4>
+                        <div class="form-group">
+                            <label for="stop_loss_orb">Initial Stop Loss (₹)</label>
+                            <input type="number" id="stop_loss_orb" name="stop_loss" value="1500">
                         </div>
-                        <br>
-                        <label><input type="radio" name="tsl_mode" value="ema"> EMA</label>
-                        <div id="tsl_ema_params" style="display: none;">
-                            <label for="tsl_ema_period">EMA Period</label>
-                            <input type="number" id="tsl_ema_period" name="tsl_ema_period" value="9">
+                        <div class="form-group">
+                            <label for="target_orb">Target (₹)</label>
+                            <input type="number" id="target_orb" name="target" value="4500">
                         </div>
-                        <br>
-                        <label><input type="radio" name="tsl_mode" value="band"> VWAP Band</label>
+                        <div class="form-group">
+                            <label><input type="checkbox" id="use_tsl" name="use_tsl" value="true"> Use Trailing Stop Loss</label>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="checkbox" name="allow_reentry" value="true" checked> Allow Re-entry after Stop Loss</label>
+                        </div>
                     </div>
-                </div>
 
-                <div class="form-group">
-                    <label><input type="checkbox" name="allow_reentry" value="true" checked> Allow Re-entry after Stop Loss</label>
+                    <!-- Moving Average Crossover Parameters -->
+                    <div id="moving_average_crossover_strategy_params" class="strategy-params">
+                        <h4>Moving Average Crossover Parameters</h4>
+                        <div class="form-group">
+                            <label for="short_window">Short Window</label>
+                            <input type="number" id="short_window" name="short_window" value="50">
+                        </div>
+                        <div class="form-group">
+                            <label for="long_window">Long Window</label>
+                            <input type="number" id="long_window" name="long_window" value="200">
+                        </div>
+                        <div class="form-group">
+                            <label for="stop_loss_mac">Stop Loss (points)</label>
+                            <input type="number" id="stop_loss_mac" name="stop_loss" value="100">
+                        </div>
+                        <div class="form-group">
+                            <label for="target_mac">Target (points)</label>
+                            <input type="number" id="target_mac" name="target" value="200">
+                        </div>
+                    </div>
                 </div>
 
                 <button type="submit" class="btn btn-primary">Run Backtest</button>
@@ -112,7 +133,6 @@
         {% if results %}
         <div class="results-container">
             <h2>Backtest Results</h2>
-
             <div class="summary-grid">
                 <div class="summary-item">
                     <h4>Total P&L (₹)</h4>
@@ -131,7 +151,6 @@
                     <p style="color: red;">{{ "%.2f"|format(results.summary.avg_loss_lose) }}</p>
                 </div>
             </div>
-
             <h4>Trades</h4>
             <table>
                 <thead>
@@ -149,10 +168,10 @@
                 <tbody>
                     {% for trade in results.trades %}
                     <tr>
-                        <td>{{ trade.entry_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td>{{ trade.entry_time.strftime('%Y-%m-%d %H:%M:%S') if trade.entry_time else '' }}</td>
                         <td>{{ "%.2f"|format(trade.entry_price) }}</td>
                         <td>{{ trade.strike_traded }}</td>
-                        <td>{{ trade.exit_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td>{{ trade.exit_time.strftime('%Y-%m-%d %H:%M:%S') if trade.exit_time else '' }}</td>
                         <td>{{ "%.2f"|format(trade.exit_price) }}</td>
                         <td style="color: green;">{{ "%.2f"|format(trade.max_profit) }}</td>
                         <td style="color: red;">{{ "%.2f"|format(trade.max_loss) }}</td>
@@ -166,53 +185,59 @@
     </div>
 
     <script>
-        // Autocomplete Script
-        const searchInput = document.getElementById('instrument_search');
-        const tokenInput = document.getElementById('instrument_token');
-        const acResultsContainer = document.getElementById('autocomplete-results');
+        document.addEventListener('DOMContentLoaded', function () {
+            // Autocomplete Script
+            const searchInput = document.getElementById('instrument_search');
+            const tokenInput = document.getElementById('instrument_token');
+            const acResultsContainer = document.getElementById('autocomplete-results');
 
-        searchInput.addEventListener('keyup', async (e) => {
-            const query = e.target.value;
-            acResultsContainer.innerHTML = '';
-            if (query.length < 3) return;
-            const response = await fetch(`/api/search-instruments?q=${query}`);
-            const instruments = await response.json();
-            if (instruments.error) {
-                acResultsContainer.innerHTML = `<div>${instruments.error}</div>`;
-                return;
-            }
-            instruments.forEach(instrument => {
-                const item = document.createElement('div');
-                item.textContent = `${instrument.tradingsymbol} (${instrument.instrument_type} - ${instrument.exchange})`;
-                item.addEventListener('click', () => {
-                    searchInput.value = instrument.tradingsymbol;
-                    tokenInput.value = instrument.instrument_token;
-                    acResultsContainer.innerHTML = '';
+            searchInput.addEventListener('keyup', async (e) => {
+                const query = e.target.value;
+                acResultsContainer.innerHTML = '';
+                if (query.length < 2) return;
+                const response = await fetch(`/api/search-instruments?q=${query}`);
+                const instruments = await response.json();
+                if (instruments.error) {
+                    acResultsContainer.innerHTML = `<div>${instruments.error}</div>`;
+                    return;
+                }
+                instruments.forEach(instrument => {
+                    const item = document.createElement('div');
+                    item.textContent = `${instrument.tradingsymbol} (${instrument.instrument_type})`;
+                    item.addEventListener('click', () => {
+                        searchInput.value = instrument.tradingsymbol;
+                        tokenInput.value = instrument.instrument_token;
+                        acResultsContainer.innerHTML = '';
+                    });
+                    acResultsContainer.appendChild(item);
                 });
-                acResultsContainer.appendChild(item);
             });
-        });
-        document.addEventListener('click', (e) => {
-            if (e.target !== searchInput) acResultsContainer.innerHTML = '';
-        });
 
-        // TSL UI Script
-        const useTslCheckbox = document.getElementById('use_tsl');
-        const tslOptionsDiv = document.getElementById('tsl_options');
-        const tslModeRadios = document.querySelectorAll('input[name="tsl_mode"]');
-        const tslFixedParamsDiv = document.getElementById('tsl_fixed_params');
-        const tslEmaParamsDiv = document.getElementById('tsl_ema_params');
-
-        useTslCheckbox.addEventListener('change', (e) => {
-            tslOptionsDiv.style.display = e.target.checked ? 'block' : 'none';
-        });
-
-        tslModeRadios.forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                const mode = e.target.value;
-                tslFixedParamsDiv.style.display = (mode === 'fixed') ? 'block' : 'none';
-                tslEmaParamsDiv.style.display = (mode === 'ema') ? 'block' : 'none';
+            document.addEventListener('click', (e) => {
+                if (!acResultsContainer.contains(e.target)) {
+                    acResultsContainer.innerHTML = '';
+                }
             });
+
+            // Strategy Parameter UI Script
+            const strategySelect = document.getElementById('strategy');
+            const allStrategyParamDivs = document.querySelectorAll('.strategy-params');
+
+            function toggleStrategyParams() {
+                const selectedStrategy = strategySelect.value + '_params';
+                allStrategyParamDivs.forEach(div => {
+                    if (div.id === selectedStrategy) {
+                        div.style.display = 'block';
+                        div.querySelectorAll('input, select').forEach(el => el.disabled = false);
+                    } else {
+                        div.style.display = 'none';
+                        div.querySelectorAll('input, select').forEach(el => el.disabled = true);
+                    }
+                });
+            }
+
+            strategySelect.addEventListener('change', toggleStrategyParams);
+            toggleStrategyParams(); // Initial call to set state on page load
         });
     </script>
 </body>

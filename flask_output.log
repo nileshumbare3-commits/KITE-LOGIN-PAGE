@@ -1,0 +1,27 @@
+ * Serving Flask app 'app'
+ * Debug mode: on
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+[33mPress CTRL+C to quit[0m
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 132-491-319
+127.0.0.1 - - [24/Dec/2025 18:47:19] "[32mGET /backtest HTTP/1.1[0m" 302 -
+127.0.0.1 - - [24/Dec/2025 18:47:19] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [24/Dec/2025 18:48:07] "GET / HTTP/1.1" 200 -
+ * Detected change in '/app/strategies/base_strategy.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 132-491-319
+ * Detected change in '/app/strategies/opening_range_breakout_strategy.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 132-491-319
+ * Detected change in '/app/strategies/moving_average_crossover_strategy.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 132-491-319
+ * Detected change in '/app/app.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 132-491-319

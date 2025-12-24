@@ -4,6 +4,10 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
+import importlib
+import inspect
+from strategies.base_strategy import BaseStrategy
+
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -13,6 +17,21 @@ api_key = "YOUR_API_KEY"
 api_secret = "YOUR_API_SECRET"
 
 kite = KiteConnect(api_key=api_key)
+
+# --- Strategy Loading ---
+STRATEGIES = {}
+
+def load_strategies():
+    """Dynamically loads all strategy classes from the 'strategies' directory."""
+    global STRATEGIES
+    strategy_files = [f[:-3] for f in os.listdir('strategies') if f.endswith('.py') and f != '__init__.py' and f != 'base_strategy.py']
+    for file_name in strategy_files:
+        module = importlib.import_module(f'strategies.{file_name}')
+        for name, obj in inspect.getmembers(module, inspect.isclass):
+            if issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
+                STRATEGIES[file_name] = {"name": obj.display_name, "class": obj}
+load_strategies()
+
 
 # --- Instrument Caching and Search (In-Memory) ---
 instrument_cache = None
@@ -75,26 +94,14 @@ def backtest():
         return redirect("/")
     if request.method == "POST":
         try:
-            instrument_token = request.form.get("instrument_token")
-            from_date_str = request.form.get("from_date")
-            to_date_str = request.form.get("to_date")
-            stop_loss = float(request.form.get("stop_loss", 1500))
-            target = float(request.form.get("target", 4500))
-            use_tsl = request.form.get("use_tsl") == "true"
-            tsl_mode = request.form.get("tsl_mode")
-            tsl_fixed_amount = float(request.form.get("tsl_fixed_amount", 0))
-            tsl_ema_period = int(request.form.get("tsl_ema_period", 9))
-            timeframe = request.form.get("timeframe", "5minute")
-            allow_reentry = request.form.get("allow_reentry") == "true"
-
-            results = run_backtest(
-                instrument_token, from_date_str, to_date_str, stop_loss, target,
-                use_tsl, tsl_mode, tsl_fixed_amount, tsl_ema_period, timeframe, allow_reentry
-            )
-            return render_template("backtest.html", results=results)
+            strategy_name = request.form.get("strategy")
+            parameters = request.form.to_dict()
+            results = run_backtest(strategy_name, parameters)
+            return render_template("backtest.html", results=results, strategies=STRATEGIES, selected_strategy=strategy_name)
         except Exception as e:
-            return render_template("backtest.html", error=str(e))
-    return render_template("backtest.html", results=None)
+            return render_template("backtest.html", error=str(e), strategies=STRATEGIES)
+    return render_template("backtest.html", results=None, strategies=STRATEGIES)
+
 
 @app.route("/scanner", methods=["GET", "POST"])
 def scanner():
@@ -221,104 +228,35 @@ def run_scanner(proximity_percent=1.0):
 
 
 # --- Backtesting Logic ---
-def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target,
-                 use_tsl, tsl_mode, tsl_fixed_amount, tsl_ema_period, timeframe, allow_reentry):
-    kite.set_access_token(session["access_token"])
+def run_backtest(strategy_name: str, parameters: dict):
+    """
+    Runs a backtest for a given strategy.
+    """
+    if strategy_name not in STRATEGIES:
+        raise ValueError(f"Strategy '{strategy_name}' not found.")
+
+    strategy_class = STRATEGIES[strategy_name]["class"]
+    strategy_instance = strategy_class()
+
+    instrument_token = parameters.get("instrument_token")
+    from_date_str = parameters.get("from_date")
+    to_date_str = parameters.get("to_date")
+    timeframe = parameters.get("timeframe", "5minute")
+
     from_date = datetime.strptime(from_date_str, "%Y-%m-%d")
     to_date = datetime.strptime(to_date_str, "%Y-%m-%d")
+
+    kite.set_access_token(session["access_token"])
     historical_data = kite.historical_data(instrument_token, from_date, to_date + timedelta(days=1), timeframe)
+
     if not historical_data:
         raise Exception("Could not fetch historical data. Please check token/dates.")
+
     df = pd.DataFrame(historical_data)
-    df['date'] = pd.to_datetime(df['date'])
-    all_trades = []
 
-    for day in pd.date_range(start=from_date, end=to_date):
-        day_df = df[df['date'].dt.date == day.date()]
-        if day_df.empty: continue
+    results = strategy_instance.run(df, parameters)
+    return results
 
-        trade_day_df = day_df[day_df['date'].dt.time >= pd.to_datetime("09:30").time()].copy()
-        if trade_day_df.empty: continue
-
-        first_candle = trade_day_df.iloc[0]
-        opening_range_high = first_candle['high']
-        opening_range_low = first_candle['low']
-
-        trade_day_df.loc[:, 'cum_volume'] = trade_day_df['volume'].cumsum()
-        trade_day_df.loc[:, 'cum_volume_high'] = (trade_day_df['high'] * trade_day_df['volume']).cumsum()
-        trade_day_df.loc[:, 'upper_band'] = trade_day_df['cum_volume_high'] / trade_day_df['cum_volume']
-        trade_day_df.loc[:, 'cum_volume_low'] = (trade_day_df['low'] * trade_day_df['volume']).cumsum()
-        trade_day_df.loc[:, 'lower_band'] = trade_day_df['cum_volume_low'] / trade_day_df['cum_volume']
-
-        if use_tsl and tsl_mode == 'ema':
-            trade_day_df.loc[:, 'tsl_ema'] = trade_day_df['close'].ewm(span=tsl_ema_period, adjust=False).mean()
-
-        in_position = False
-        current_trade = {}
-        high_water_mark, low_water_mark = 0, 0
-
-        for i, row in trade_day_df.iterrows():
-            if in_position:
-                lot_size = 50
-                price_change = row['close'] - current_trade['entry_price']
-                pnl = price_change * 0.3 * lot_size if current_trade['type'] == 'SELL_PUT_SPREAD' else -price_change * 0.3 * lot_size
-                current_trade['max_profit'] = max(current_trade.get('max_profit', pnl), pnl)
-                current_trade['max_loss'] = min(current_trade.get('max_loss', pnl), pnl)
-
-                exit_condition_met = False
-                if pnl >= target: exit_condition_met = True
-                elif use_tsl:
-                    if current_trade['type'] == 'SELL_PUT_SPREAD':
-                        if tsl_mode == 'fixed':
-                            high_water_mark = max(high_water_mark, row['close'])
-                            tsl_price = high_water_mark - tsl_fixed_amount
-                        elif tsl_mode == 'ema':
-                            tsl_price = row['tsl_ema']
-                        else: # Band mode
-                            tsl_price = row['lower_band']
-                        if row['close'] < tsl_price: exit_condition_met = True
-                    else: # Bearish trade
-                        if tsl_mode == 'fixed':
-                            low_water_mark = min(low_water_mark, row['close'])
-                            tsl_price = low_water_mark + tsl_fixed_amount
-                        elif tsl_mode == 'ema':
-                            tsl_price = row['tsl_ema']
-                        else: # Band mode
-                            tsl_price = row['upper_band']
-                        if row['close'] > tsl_price: exit_condition_met = True
-                elif pnl <= -stop_loss: exit_condition_met = True
-
-                if exit_condition_met:
-                    current_trade.update({'exit_price': row['close'], 'exit_time': row['date'], 'pnl': pnl})
-                    all_trades.append(current_trade)
-                    in_position = False
-                    current_trade = {}
-                    if not allow_reentry:
-                        break
-
-            if not in_position:
-                def get_strike(price): return round(price / 50) * 50
-                if row['close'] > row['upper_band'] and row['open'] < row['upper_band'] and row['close'] > opening_range_high:
-                    in_position, strike = True, get_strike(row['close'])
-                    current_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} PE"}
-                    high_water_mark = row['close']
-                elif row['close'] < row['lower_band'] and row['open'] > row['lower_band'] and row['close'] < opening_range_low:
-                    in_position, strike = True, get_strike(row['close'])
-                    current_trade = {"type": "SELL_CALL_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} CE"}
-                    low_water_mark = row['close']
-
-        if in_position:
-            last_row = trade_day_df.iloc[-1]
-            price_change = last_row['close'] - current_trade['entry_price']
-            pnl = price_change * 0.3 * lot_size if current_trade['type'] == 'SELL_PUT_SPREAD' else -price_change * 0.3 * lot_size
-            current_trade.update({'exit_price': last_row['close'], 'exit_time': last_row['date'], 'pnl': pnl, 'max_profit': max(current_trade.get('max_profit', pnl), pnl), 'max_loss': min(current_trade.get('max_loss', pnl), pnl)})
-            all_trades.append(current_trade)
-
-    total_pnl = sum(trade['pnl'] for trade in all_trades)
-    winning_trades = [t for t in all_trades if t['pnl'] > 0]
-    losing_trades = [t for t in all_trades if t['pnl'] <= 0]
-    summary = {"win_percentage": (len(winning_trades) / len(all_trades) * 100) if all_trades else 0, "avg_profit_win": sum(t['pnl'] for t in winning_trades) / len(winning_trades) if winning_trades else 0, "avg_loss_lose": sum(t['pnl'] for t in losing_trades) / len(losing_trades) if losing_trades else 0}
-    return {"trades": all_trades, "total_pnl": total_pnl, "summary": summary}
 
 if __name__ == "__main__":
     app.run(debug=True)
