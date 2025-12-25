@@ -1,39 +1,11 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kite Login</title>
-    <style>
-        body {
-            font-family: sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .login-container {
-            text-align: center;
-        }
-        .login-button {
-            display: inline-block;
-            padding: 15px 30px;
-            font-size: 18px;
-            color: white;
-            background-color: #387ed1;
-            border: none;
-            border-radius: 5px;
-            text-decoration: none;
-            cursor: pointer;
-        }
-    </style>
-</head>
-<body>
-    <div class="login-container">
-        <h1>Welcome to the Trading Terminal</h1>
-        <p>Please log in with your Kite account to continue.</p>
-        <a href="/login" class="login-button">Login with Kite</a>
+{% extends "layout.html" %}
+{% block title %}Welcome{% endblock %}
+{% block content %}
+<div class="p-5 mb-4 bg-light rounded-3">
+    <div class="container-fluid py-5">
+        <h1 class="display-5 fw-bold">Welcome to the Streak Clone</h1>
+        <p class="col-md-8 fs-4">Create, backtest, and deploy trading strategies without writing any code. Login with your Kite account to get started.</p>
+        <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg">Login with Kite</a>
     </div>
-</body>
-</html>
+</div>
+{% endblock %}

@@ -1,149 +1,53 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Option Intraday Backtesting</title>
-    <style>
-        body { font-family: sans-serif; margin: 2em; }
-        .container { max-width: 1200px; margin: auto; }
-        .form-container, .results-container { border: 1px solid #ccc; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
-        .form-group { margin-bottom: 15px; position: relative; }
-        .form-group label { display: block; margin-bottom: 5px; }
-        .form-group input[type="text"], .form-group input[type="date"], .form-group input[type="number"], .form-group select { width: 100%; padding: 8px; box-sizing: border-box; }
-        .btn { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; }
-        .btn-primary { background-color: #387ed1; color: white; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        .nav { margin-bottom: 20px; }
-        .nav a { margin-right: 15px; text-decoration: none; }
-        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .summary-item { background-color: #f9f9f9; border: 1px solid #eee; padding: 15px; border-radius: 5px; text-align: center; }
-        .summary-item h4 { margin: 0 0 10px 0; }
-        .summary-item p { margin: 0; font-size: 1.2em; font-weight: bold; }
-        .autocomplete-results { position: absolute; border: 1px solid #ddd; border-top: none; z-index: 99; top: 100%; left: 0; right: 0; background-color: white; }
-        .autocomplete-results div { padding: 10px; cursor: pointer; }
-        .autocomplete-results div:hover { background-color: #f2f2f2; }
-        .tsl-options { border: 1px solid #eee; padding: 15px; margin-top: 10px; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="nav">
-            <a href="/home">Home</a>
-            <a href="/backtest">Backtesting</a>
-            <a href="/scanner">Scanner</a>
-            <a href="/logout" style="float: right;">Logout</a>
+{% extends "layout.html" %}
+{% block title %}Backtest Results{% endblock %}
+{% block content %}
+<div class="container">
+    {% if strategy %}
+        <h1 class="mb-4">Backtest Results for: <span class="text-primary">{{ strategy.name }}</span></h1>
+    {% else %}
+        <h1 class="mb-4">Backtest</h1>
+    {% endif %}
+
+    {% if results %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>Performance Summary</h4>
         </div>
-
-        <h1>Option Intraday Backtesting</h1>
-
-        <div class="form-container">
-            <h2>Strategy Configuration</h2>
-            <form method="POST" action="/backtest">
-                <div class="form-group">
-                    <label for="instrument_search">Search Instrument (e.g., NIFTY FUT)</label>
-                    <input type="text" id="instrument_search" name="instrument_search" autocomplete="off" required>
-                    <input type="hidden" id="instrument_token" name="instrument_token" required>
-                    <div id="autocomplete-results" class="autocomplete-results"></div>
+        <div class="card-body">
+            <div class="row text-center">
+                <div class="col-md-3">
+                    <h5>Total P&L</h5>
+                    <p class="fs-4 {% if results.total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">{{ "%.2f"|format(results.total_pnl) }}</p>
                 </div>
-                <div class="form-group">
-                    <label for="timeframe">Timeframe</label>
-                    <select id="timeframe" name="timeframe">
-                        <option value="minute">1 Minute</option>
-                        <option value="3minute">3 Minute</option>
-                        <option value="5minute" selected>5 Minute</option>
-                        <option value="10minute">10 Minute</option>
-                        <option value="15minute">15 Minute</option>
-                    </select>
+                <div class="col-md-3">
+                    <h5>Win Rate</h5>
+                    <p class="fs-4">{{ "%.2f"|format(results.win_rate) }}%</p>
                 </div>
-                <div class="form-group">
-                    <label for="from_date">From Date</label>
-                    <input type="date" id="from_date" name="from_date" required>
+                <div class="col-md-3">
+                    <h5>Average Profit</h5>
+                    <p class="fs-4 text-success">{{ "%.2f"|format(results.average_profit) }}</p>
                 </div>
-                <div class="form-group">
-                    <label for="to_date">To Date</label>
-                    <input type="date" id="to_date" name="to_date" required>
-                </div>
-                <div class="form-group">
-                    <label for="stop_loss">Initial Stop Loss (₹)</label>
-                    <input type="number" id="stop_loss" name="stop_loss" value="1500">
-                </div>
-                <div class="form-group">
-                    <label for="target">Target (₹)</label>
-                    <input type="number" id="target" name="target" value="4500">
-                </div>
-
-                <div class="form-group">
-                    <label><input type="checkbox" id="use_tsl" name="use_tsl" value="true"> Use Trailing Stop Loss</label>
-                    <div id="tsl_options" class="tsl-options" style="display: none;">
-                        <label><input type="radio" name="tsl_mode" value="fixed" checked> Fixed</label>
-                        <div id="tsl_fixed_params">
-                            <label for="tsl_fixed_amount">Trail Amount (points)</label>
-                            <input type="number" id="tsl_fixed_amount" name="tsl_fixed_amount" value="20">
-                        </div>
-                        <br>
-                        <label><input type="radio" name="tsl_mode" value="ema"> EMA</label>
-                        <div id="tsl_ema_params" style="display: none;">
-                            <label for="tsl_ema_period">EMA Period</label>
-                            <input type="number" id="tsl_ema_period" name="tsl_ema_period" value="9">
-                        </div>
-                        <br>
-                        <label><input type="radio" name="tsl_mode" value="band"> VWAP Band</label>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label><input type="checkbox" name="allow_reentry" value="true" checked> Allow Re-entry after Stop Loss</label>
-                </div>
-
-                <button type="submit" class="btn btn-primary">Run Backtest</button>
-            </form>
-        </div>
-
-        {% if error %}
-            <div class="results-container" style="color: red;">
-                <h2>Error</h2>
-                <p>{{ error }}</p>
-            </div>
-        {% endif %}
-
-        {% if results %}
-        <div class="results-container">
-            <h2>Backtest Results</h2>
-
-            <div class="summary-grid">
-                <div class="summary-item">
-                    <h4>Total P&L (₹)</h4>
-                    <p style="color: {{ 'green' if results.total_pnl >= 0 else 'red' }};">{{ "%.2f"|format(results.total_pnl) }}</p>
-                </div>
-                <div class="summary-item">
-                    <h4>Win Rate (%)</h4>
-                    <p>{{ "%.2f"|format(results.summary.win_percentage) }}%</p>
-                </div>
-                <div class="summary-item">
-                    <h4>Avg. Profit on Wins (₹)</h4>
-                    <p style="color: green;">{{ "%.2f"|format(results.summary.avg_profit_win) }}</p>
-                </div>
-                <div class="summary-item">
-                    <h4>Avg. Loss on Losses (₹)</h4>
-                    <p style="color: red;">{{ "%.2f"|format(results.summary.avg_loss_lose) }}</p>
+                <div class="col-md-3">
+                    <h5>Average Loss</h5>
+                    <p class="fs-4 text-danger">{{ "%.2f"|format(results.average_loss) }}</p>
                 </div>
             </div>
+        </div>
+    </div>
 
-            <h4>Trades</h4>
-            <table>
+    <div class="card">
+        <div class="card-header">
+            <h4>Trades ({{ results.total_trades }})</h4>
+        </div>
+        <div class="card-body">
+            <table class="table table-striped">
                 <thead>
                     <tr>
                         <th>Entry Time</th>
                         <th>Entry Price</th>
-                        <th>Strike Traded</th>
                         <th>Exit Time</th>
                         <th>Exit Price</th>
-                        <th>Max Profit (₹)</th>
-                        <th>Max Loss (₹)</th>
-                        <th>Final P&L (₹)</th>
+                        <th>P&L</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -151,69 +55,17 @@
                     <tr>
                         <td>{{ trade.entry_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                         <td>{{ "%.2f"|format(trade.entry_price) }}</td>
-                        <td>{{ trade.strike_traded }}</td>
-                        <td>{{ trade.exit_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-                        <td>{{ "%.2f"|format(trade.exit_price) }}</td>
-                        <td style="color: green;">{{ "%.2f"|format(trade.max_profit) }}</td>
-                        <td style="color: red;">{{ "%.2f"|format(trade.max_loss) }}</td>
-                        <td style="color: {{ 'green' if trade.pnl >= 0 else 'red' }};">{{ "%.2f"|format(trade.pnl) }}</td>
+                        <td>{{ trade.exit_time.strftime('%Y-%m-%d %H:%M:%S') if trade.exit_time else '' }}</td>
+                        <td>{{ "%.2f"|format(trade.exit_price) if trade.exit_price else '' }}</td>
+                        <td class="{% if trade.pnl >= 0 %}text-success{% else %}text-danger{% endif %}">{{ "%.2f"|format(trade.pnl) }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-        {% endif %}
     </div>
-
-    <script>
-        // Autocomplete Script
-        const searchInput = document.getElementById('instrument_search');
-        const tokenInput = document.getElementById('instrument_token');
-        const acResultsContainer = document.getElementById('autocomplete-results');
-
-        searchInput.addEventListener('keyup', async (e) => {
-            const query = e.target.value;
-            acResultsContainer.innerHTML = '';
-            if (query.length < 3) return;
-            const response = await fetch(`/api/search-instruments?q=${query}`);
-            const instruments = await response.json();
-            if (instruments.error) {
-                acResultsContainer.innerHTML = `<div>${instruments.error}</div>`;
-                return;
-            }
-            instruments.forEach(instrument => {
-                const item = document.createElement('div');
-                item.textContent = `${instrument.tradingsymbol} (${instrument.instrument_type} - ${instrument.exchange})`;
-                item.addEventListener('click', () => {
-                    searchInput.value = instrument.tradingsymbol;
-                    tokenInput.value = instrument.instrument_token;
-                    acResultsContainer.innerHTML = '';
-                });
-                acResultsContainer.appendChild(item);
-            });
-        });
-        document.addEventListener('click', (e) => {
-            if (e.target !== searchInput) acResultsContainer.innerHTML = '';
-        });
-
-        // TSL UI Script
-        const useTslCheckbox = document.getElementById('use_tsl');
-        const tslOptionsDiv = document.getElementById('tsl_options');
-        const tslModeRadios = document.querySelectorAll('input[name="tsl_mode"]');
-        const tslFixedParamsDiv = document.getElementById('tsl_fixed_params');
-        const tslEmaParamsDiv = document.getElementById('tsl_ema_params');
-
-        useTslCheckbox.addEventListener('change', (e) => {
-            tslOptionsDiv.style.display = e.target.checked ? 'block' : 'none';
-        });
-
-        tslModeRadios.forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                const mode = e.target.value;
-                tslFixedParamsDiv.style.display = (mode === 'fixed') ? 'block' : 'none';
-                tslEmaParamsDiv.style.display = (mode === 'ema') ? 'block' : 'none';
-            });
-        });
-    </script>
-</body>
-</html>
+    {% else %}
+        <p>No backtest has been run yet. Go to your dashboard to run a backtest on a strategy.</p>
+    {% endif %}
+</div>
+{% endblock %}
