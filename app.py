@@ -15,8 +15,8 @@ strategies = {}
 strategy_id_counter = 1
 
 # Replace with your API key and secret - In a real app, use environment variables
-api_key = os.environ.get("KITE_API_KEY", "YOUR_API_KEY")
-api_secret = os.environ.get("KITE_API_SECRET", "YOUR_API_SECRET")
+api_key = os.environ.get("KITE_API_KEY", "jaibrxwjfdmr86ao")
+api_secret = os.environ.get("KITE_API_SECRET", "se1mzachqkdv963oqgbu7ij0y6002di1")
 
 kite = KiteConnect(api_key=api_key)
 
