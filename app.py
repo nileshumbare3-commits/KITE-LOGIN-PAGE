@@ -1,10 +1,12 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 import os
 from kiteconnect import KiteConnect
+from breeze_connect import BreezeConnect
 import json
 import pandas as pd
 from datetime import datetime
 from backtesting_engine import BacktestingEngine
+from data_provider import get_historical_data
 import traceback
 
 app = Flask(__name__)
@@ -18,20 +20,11 @@ strategy_id_counter = 1
 api_key = os.environ.get("KITE_API_KEY", "jaibrxwjfdmr86ao")
 api_secret = os.environ.get("KITE_API_SECRET", "se1mzachqkdv963oqgbu7ij0y6002di1")
 
+breeze_app_key = os.environ.get("BREEZE_APP_KEY", "5(412`OS2U50050a97845797Y669o23$")
+breeze_app_secret = os.environ.get("BREEZE_APP_SECRET", "85Ht253E2Ye22o1931S0u36y50eQ08X4")
+
 kite = KiteConnect(api_key=api_key)
-
-instrument_df = None
-
-def get_instrument_token(instrument_name):
-    """Looks up the instrument token for a given instrument name."""
-    global instrument_df
-    if instrument_df is None:
-        instrument_df = pd.DataFrame(kite.instruments())
-
-    instrument = instrument_df[instrument_df.tradingsymbol == instrument_name]
-    if not instrument.empty:
-        return instrument.instrument_token.iloc[0]
-    return None
+breeze = BreezeConnect(api_key=breeze_app_key)
 
 @app.route('/')
 def index():
@@ -42,6 +35,19 @@ def index():
 def login():
     """Redirects the user to the Kite login page."""
     return redirect(kite.login_url())
+
+@app.route('/breeze-login')
+def breeze_login():
+    """Redirects the user to the Breeze login page."""
+    breeze.generate_session(api_secret=breeze_app_secret, session_token=None)
+    return redirect(breeze.redirect_url)
+
+@app.route('/breeze-callback')
+def breeze_callback():
+    """Handles the callback from Breeze after successful login."""
+    breeze.generate_session(api_secret=breeze_app_secret, session_token=request.args.get('api_session'))
+    session['breeze_session'] = breeze.get_session()
+    return redirect(url_for('dashboard'))
 
 @app.route('/callback')
 def callback():
@@ -60,21 +66,21 @@ def callback():
 @app.route('/dashboard')
 def dashboard():
     """Displays the main dashboard after login."""
-    if 'access_token' not in session:
+    if 'access_token' not in session and 'breeze_session' not in session:
         return redirect(url_for('login'))
     return render_template('dashboard.html', strategies=strategies)
 
 @app.route('/strategy-builder')
 def strategy_builder():
     """Displays the strategy builder page."""
-    if 'access_token' not in session:
+    if 'access_token' not in session and 'breeze_session' not in session:
         return redirect(url_for('login'))
     return render_template('strategy-builder.html')
 
 @app.route('/backtest')
 def backtest():
     """Displays the backtesting page."""
-    if 'access_token' not in session:
+    if 'access_token' not in session and 'breeze_session' not in session:
         return redirect(url_for('login'))
     # This will be enhanced to show backtest results
     return render_template('backtest.html')
@@ -83,12 +89,13 @@ def backtest():
 def logout():
     """Logs the user out."""
     session.pop('access_token', None)
+    session.pop('breeze_session', None)
     return redirect(url_for('index'))
 
 @app.route('/save-strategy', methods=['POST'])
 def save_strategy():
     """Saves the strategy configuration from the builder."""
-    if 'access_token' not in session:
+    if 'access_token' not in session and 'breeze_session' not in session:
         return redirect(url_for('login'))
 
     global strategy_id_counter
@@ -143,7 +150,7 @@ def save_strategy():
 @app.route('/edit-strategy/<int:strategy_id>', methods=['GET', 'POST'])
 def edit_strategy(strategy_id):
     """Handles editing a strategy."""
-    if 'access_token' not in session:
+    if 'access_token' not in session and 'breeze_session' not in session:
         return redirect(url_for('login'))
 
     strategy = strategies.get(strategy_id)
@@ -190,7 +197,7 @@ def edit_strategy(strategy_id):
 @app.route('/run-backtest/<int:strategy_id>')
 def run_backtest(strategy_id):
     """Displays the page to set backtest parameters."""
-    if 'access_token' not in session:
+    if 'access_token' not in session and 'breeze_session' not in session:
         return redirect(url_for('login'))
 
     strategy = strategies.get(strategy_id)
@@ -202,7 +209,7 @@ def run_backtest(strategy_id):
 @app.route('/execute-backtest/<int:strategy_id>', methods=['POST'])
 def execute_backtest(strategy_id):
     """Executes the backtest with the given parameters."""
-    if 'access_token' not in session:
+    if 'access_token' not in session and 'breeze_session' not in session:
         return redirect(url_for('login'))
 
     strategy = strategies.get(strategy_id)
@@ -215,13 +222,7 @@ def execute_backtest(strategy_id):
         from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
         to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
 
-        kite.set_access_token(session['access_token'])
-
-        instrument_token = get_instrument_token(strategy['instrument'])
-        if not instrument_token:
-            return "Instrument not found", 404
-
-        historical_data = kite.historical_data(instrument_token, from_date, to_date, "5minute")
+        historical_data = get_historical_data(kite, breeze, strategy['instrument'], from_date, to_date, "5minute")
 
         engine = BacktestingEngine(strategy, historical_data)
         results = engine.run()
@@ -233,7 +234,7 @@ def execute_backtest(strategy_id):
 @app.route('/delete-strategy/<int:strategy_id>')
 def delete_strategy(strategy_id):
     """Deletes a strategy."""
-    if 'access_token' not in session:
+    if 'access_token' not in session and 'breeze_session' not in session:
         return redirect(url_for('login'))
 
     if strategy_id in strategies:

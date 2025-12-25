@@ -3,3 +3,4 @@ kiteconnect==3.9.2
 pandas
 numpy
 requests
+breeze-connect
