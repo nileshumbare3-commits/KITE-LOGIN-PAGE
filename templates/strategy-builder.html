@@ -1,0 +1,127 @@
+{% extends "layout.html" %}
+{% block title %}{% if strategy %}Edit Strategy{% else %}Strategy Builder{% endif %}{% endblock %}
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">{% if strategy %}Edit Strategy{% else %}Strategy Builder{% endif %}</h1>
+    <form action="{{ url_for('edit_strategy', strategy_id=strategy.id) if strategy else url_for('save_strategy') }}" method="POST" id="strategy-form">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h4>General</h4>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="strategy-name" class="form-label">Strategy Name</label>
+                    <input type="text" class="form-control" id="strategy-name" name="strategy_name" value="{{ strategy.name if strategy else '' }}" placeholder="e.g., My Awesome Strategy" required>
+                </div>
+                <div class="mb-3">
+                    <label for="instrument" class="form-label">Instrument</label>
+                    <input type="text" class="form-control" id="instrument" name="instrument" value="{{ strategy.instrument if strategy else '' }}" placeholder="e.g., NIFTY 50" required>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h4>Entry Conditions</h4>
+            </div>
+            <div class="card-body" id="entry-conditions">
+                {% if strategy %}
+                    {% for condition in strategy.entry_conditions %}
+                        <div class="row mb-3 align-items-center condition-row" data-index="{{ loop.index }}">
+                            <div class="col-md-3">
+                                <select class="form-select" name="entry_indicator_{{ loop.index }}" required>
+                                    <option value="SMA" {% if condition.indicator == 'SMA' %}selected{% endif %}>Simple Moving Average</option>
+                                    <option value="EMA" {% if condition.indicator == 'EMA' %}selected{% endif %}>Exponential Moving Average</option>
+                                    <option value="RSI" {% if condition.indicator == 'RSI' %}selected{% endif %}>Relative Strength Index</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <input type="text" class="form-control" name="entry_indicator_param1_{{ loop.index }}" placeholder="Param 1" value="{{ condition.param1 }}">
+                            </div>
+                            <div class="col-md-3">
+                                <select class="form-select" name="entry_operator_{{ loop.index }}" required>
+                                    <option value="crosses_above" {% if condition.operator == 'crosses_above' %}selected{% endif %}>Crosses Above</option>
+                                    <option value="crosses_below" {% if condition.operator == 'crosses_below' %}selected{% endif %}>Crosses Below</option>
+                                    <option value="greater_than" {% if condition.operator == 'greater_than' %}selected{% endif %}>Greater Than</option>
+                                    <option value="less_than" {% if condition.operator == 'less_than' %}selected{% endif %}>Less Than</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <input type="text" class="form-control" name="entry_value_{{ loop.index }}" placeholder="Value/Indicator" value="{{ condition.value }}" required>
+                            </div>
+                            <div class="col-md-1">
+                                <button type="button" class="btn btn-danger btn-sm remove-condition">X</button>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+            <div class="card-footer">
+                <button type="button" class="btn btn-primary" id="add-entry-condition">Add Entry Condition</button>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h4>Exit Conditions</h4>
+            </div>
+            <div class="card-body" id="exit-conditions">
+                {% if strategy %}
+                    {% for condition in strategy.exit_conditions %}
+                        <div class="row mb-3 align-items-center condition-row" data-index="{{ loop.index }}">
+                            <div class="col-md-3">
+                                <select class="form-select" name="exit_indicator_{{ loop.index }}" required>
+                                    <option value="SMA" {% if condition.indicator == 'SMA' %}selected{% endif %}>Simple Moving Average</option>
+                                    <option value="EMA" {% if condition.indicator == 'EMA' %}selected{% endif %}>Exponential Moving Average</option>
+                                    <option value="RSI" {% if condition.indicator == 'RSI' %}selected{% endif %}>Relative Strength Index</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <input type="text" class="form-control" name="exit_indicator_param1_{{ loop.index }}" placeholder="Param 1" value="{{ condition.param1 }}">
+                            </div>
+                            <div class="col-md-3">
+                                <select class="form-select" name="exit_operator_{{ loop.index }}" required>
+                                    <option value="crosses_above" {% if condition.operator == 'crosses_above' %}selected{% endif %}>Crosses Above</option>
+                                    <option value="crosses_below" {% if condition.operator == 'crosses_below' %}selected{% endif %}>Crosses Below</option>
+                                    <option value="greater_than" {% if condition.operator == 'greater_than' %}selected{% endif %}>Greater Than</option>
+                                    <option value="less_than" {% if condition.operator == 'less_than' %}selected{% endif %}>Less Than</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <input type="text" class="form-control" name="exit_value_{{ loop.index }}" placeholder="Value/Indicator" value="{{ condition.value }}" required>
+                            </div>
+                            <div class="col-md-1">
+                                <button type="button" class="btn btn-danger btn-sm remove-condition">X</button>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+            <div class="card-footer">
+                <button type="button" class="btn btn-primary" id="add-exit-condition">Add Exit Condition</button>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h4>Risk Management</h4>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="stop-loss" class="form-label">Stop Loss (%)</label>
+                        <input type="number" class="form-control" id="stop-loss" name="stop_loss" value="{{ strategy.stop_loss if strategy else '' }}" step="0.1" placeholder="e.g., 2.5">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="take-profit" class="form-label">Take Profit (%)</label>
+                        <input type="number" class="form-control" id="take-profit" name="take_profit" value="{{ strategy.take_profit if strategy else '' }}" step="0.1" placeholder="e.g., 5.0">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-success btn-lg">{% if strategy %}Update Strategy{% else %}Save Strategy{% endif %}</button>
+    </form>
+</div>
+<script src="{{ url_for('static', filename='js/strategy-builder.js') }}"></script>
+{% endblock %}

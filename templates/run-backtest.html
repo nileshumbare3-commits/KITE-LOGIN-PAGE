@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+{% block title %}Run Backtest{% endblock %}
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">Run Backtest for: <span class="text-primary">{{ strategy.name }}</span></h1>
+    <form action="{{ url_for('execute_backtest', strategy_id=strategy.id) }}" method="POST">
+        <div class="card">
+            <div class="card-header">
+                <h4>Backtest Period</h4>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="from-date" class="form-label">From Date</label>
+                        <input type="date" class="form-control" id="from-date" name="from_date" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="to-date" class="form-label">To Date</label>
+                        <input type="date" class="form-control" id="to-date" name="to_date" required>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer">
+                <button type="submit" class="btn btn-primary">Execute Backtest</button>
+            </div>
+        </div>
+    </form>
+</div>
+{% endblock %}

@@ -1,324 +1,247 @@
-from flask import Flask, request, redirect, session, render_template, jsonify
-from kiteconnect import KiteConnect
+from flask import Flask, render_template, request, redirect, url_for, session
 import os
+from kiteconnect import KiteConnect
+from breeze_connect import BreezeConnect
+import json
 import pandas as pd
-from datetime import datetime, timedelta
-import numpy as np
+from datetime import datetime
+from backtesting_engine import BacktestingEngine
+from data_provider import get_historical_data
+import traceback
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Replace with your API key and secret
-api_key = "YOUR_API_KEY"
-api_secret = "YOUR_API_SECRET"
+# In-memory store for strategies for simplicity
+strategies = {}
+strategy_id_counter = 1
+
+# Replace with your API key and secret - In a real app, use environment variables
+api_key = os.environ.get("KITE_API_KEY", "jaibrxwjfdmr86ao")
+api_secret = os.environ.get("KITE_API_SECRET", "se1mzachqkdv963oqgbu7ij0y6002di1")
+
+breeze_app_key = os.environ.get("BREEZE_APP_KEY", "5(412`OS2U50050a97845797Y669o23$")
+breeze_app_secret = os.environ.get("BREEZE_APP_SECRET", "85Ht253E2Ye22o1931S0u36y50eQ08X4")
 
 kite = KiteConnect(api_key=api_key)
+breeze = BreezeConnect(api_key=breeze_app_key)
 
-# --- Instrument Caching and Search (In-Memory) ---
-instrument_cache = None
-
-def update_instrument_cache():
-    """Fetches and caches the instrument list in a global variable."""
-    global instrument_cache
-    try:
-        kite.set_access_token(session["access_token"])
-        instruments = kite.instruments()
-        instrument_cache = pd.DataFrame(instruments)
-    except Exception as e:
-        print(f"Error caching instruments: {e}")
-        instrument_cache = None
-
-# --- Routes ---
-
-@app.route("/")
+@app.route('/')
 def index():
-    if "access_token" in session:
-        return redirect("/home")
-    return render_template("index.html")
+    """Renders the landing page."""
+    return render_template('index.html')
 
-@app.route("/login")
+@app.route('/login')
 def login():
+    """Redirects the user to the Kite login page."""
     return redirect(kite.login_url())
 
-@app.route("/callback")
+@app.route('/breeze-login')
+def breeze_login():
+    """Redirects the user to the Breeze login page."""
+    breeze.generate_session(api_secret=breeze_app_secret, session_token=None)
+    return redirect(breeze.redirect_url)
+
+@app.route('/breeze-callback')
+def breeze_callback():
+    """Handles the callback from Breeze after successful login."""
+    breeze.generate_session(api_secret=breeze_app_secret, session_token=request.args.get('api_session'))
+    session['breeze_session'] = breeze.get_session()
+    return redirect(url_for('dashboard'))
+
+@app.route('/callback')
 def callback():
-    request_token = request.args.get("request_token")
+    """Handles the callback from Kite after successful login."""
+    request_token = request.args.get('request_token')
     if not request_token:
-        return "Error: request_token not found."
+        return "Error: request_token not found.", 400
     try:
         data = kite.generate_session(request_token, api_secret=api_secret)
-        session["access_token"] = data["access_token"]
-        update_instrument_cache()
-        return redirect("/home")
+        session['access_token'] = data['access_token']
+        # Fetch and cache instruments or user profile if needed
+        return redirect(url_for('dashboard'))
     except Exception as e:
-        return f"Error: {e}"
+        return f"Authentication failed: {e}", 400
 
-@app.route("/home")
-def home():
-    if "access_token" not in session:
-        return redirect("/")
-    try:
-        kite.set_access_token(session["access_token"])
-        profile = kite.profile()
-        return render_template("home.html", user=profile)
-    except Exception as e:
-        return f"Error: {e}"
+@app.route('/dashboard')
+def dashboard():
+    """Displays the main dashboard after login."""
+    if 'access_token' not in session and 'breeze_session' not in session:
+        return redirect(url_for('login'))
+    return render_template('dashboard.html', strategies=strategies)
 
-@app.route("/logout")
-def logout():
-    session.pop("access_token", None)
-    return redirect("/")
+@app.route('/strategy-builder')
+def strategy_builder():
+    """Displays the strategy builder page."""
+    if 'access_token' not in session and 'breeze_session' not in session:
+        return redirect(url_for('login'))
+    return render_template('strategy-builder.html')
 
-@app.route("/backtest", methods=["GET", "POST"])
+@app.route('/backtest')
 def backtest():
-    if "access_token" not in session:
-        return redirect("/")
-    if request.method == "POST":
-        try:
-            instrument_token = request.form.get("instrument_token")
-            from_date_str = request.form.get("from_date")
-            to_date_str = request.form.get("to_date")
-            stop_loss = float(request.form.get("stop_loss", 1500))
-            target = float(request.form.get("target", 4500))
-            use_tsl = request.form.get("use_tsl") == "true"
-            tsl_mode = request.form.get("tsl_mode")
-            tsl_fixed_amount = float(request.form.get("tsl_fixed_amount", 0))
-            tsl_ema_period = int(request.form.get("tsl_ema_period", 9))
-            timeframe = request.form.get("timeframe", "5minute")
-            allow_reentry = request.form.get("allow_reentry") == "true"
+    """Displays the backtesting page."""
+    if 'access_token' not in session and 'breeze_session' not in session:
+        return redirect(url_for('login'))
+    # This will be enhanced to show backtest results
+    return render_template('backtest.html')
 
-            results = run_backtest(
-                instrument_token, from_date_str, to_date_str, stop_loss, target,
-                use_tsl, tsl_mode, tsl_fixed_amount, tsl_ema_period, timeframe, allow_reentry
-            )
-            return render_template("backtest.html", results=results)
-        except Exception as e:
-            return render_template("backtest.html", error=str(e))
-    return render_template("backtest.html", results=None)
+@app.route('/logout')
+def logout():
+    """Logs the user out."""
+    session.pop('access_token', None)
+    session.pop('breeze_session', None)
+    return redirect(url_for('index'))
 
-@app.route("/scanner", methods=["GET", "POST"])
-def scanner():
-    if "access_token" not in session:
-        return redirect("/")
+@app.route('/save-strategy', methods=['POST'])
+def save_strategy():
+    """Saves the strategy configuration from the builder."""
+    if 'access_token' not in session and 'breeze_session' not in session:
+        return redirect(url_for('login'))
 
-    if request.method == "POST":
-        try:
-            proximity_percent = float(request.form.get("proximity_percent", 1.0))
-            results = run_scanner(proximity_percent)
-            return render_template("scanner.html", results=results)
-        except Exception as e:
-            return render_template("scanner.html", error=str(e))
+    global strategy_id_counter
+    strategy_name = request.form.get('strategy_name')
+    instrument = request.form.get('instrument')
+    stop_loss = request.form.get('stop_loss')
+    take_profit = request.form.get('take_profit')
 
-    return render_template("scanner.html", results=None)
+    entry_conditions = []
+    exit_conditions = []
 
+    # This parsing logic is a bit complex due to the dynamic form
+    # In a real app, you might use a library or a more robust naming convention
+    for key, value in request.form.items():
+        if key.startswith('entry_indicator_'):
+            index = key.split('_')[-1]
+            condition = {
+                'indicator': value,
+                'param1': request.form.get(f'entry_indicator_param1_{index}'),
+                'operator': request.form.get(f'entry_operator_{index}'),
+                'value': request.form.get(f'entry_value_{index}')
+            }
+            entry_conditions.append(condition)
+        elif key.startswith('exit_indicator_'):
+            index = key.split('_')[-1]
+            condition = {
+                'indicator': value,
+                'param1': request.form.get(f'exit_indicator_param1_{index}'),
+                'operator': request.form.get(f'exit_operator_{index}'),
+                'value': request.form.get(f'exit_value_{index}')
+            }
+            exit_conditions.append(condition)
 
-@app.route("/api/search-instruments")
-def search_instruments():
-    global instrument_cache
-    query = request.args.get("q", "").upper()
-    if instrument_cache is None:
-        return jsonify({"error": "Instrument list not cached. Please log in again."}), 503
-    if not query:
-        return jsonify([])
+    strategy = {
+        'id': strategy_id_counter,
+        'name': strategy_name,
+        'instrument': instrument,
+        'entry_conditions': entry_conditions,
+        'exit_conditions': exit_conditions,
+        'stop_loss': stop_loss,
+        'take_profit': take_profit
+    }
+
+    strategies[strategy_id_counter] = strategy
+    strategy_id_counter += 1
+
+    # For debugging: print the captured strategy
+    print(json.dumps(strategy, indent=4))
+
+    return redirect(url_for('dashboard'))
+
+@app.route('/edit-strategy/<int:strategy_id>', methods=['GET', 'POST'])
+def edit_strategy(strategy_id):
+    """Handles editing a strategy."""
+    if 'access_token' not in session and 'breeze_session' not in session:
+        return redirect(url_for('login'))
+
+    strategy = strategies.get(strategy_id)
+    if not strategy:
+        return "Strategy not found", 404
+
+    if request.method == 'POST':
+        # Update logic
+        strategy['name'] = request.form.get('strategy_name')
+        strategy['instrument'] = request.form.get('instrument')
+        strategy['stop_loss'] = request.form.get('stop_loss')
+        strategy['take_profit'] = request.form.get('take_profit')
+
+        entry_conditions = []
+        exit_conditions = []
+
+        for key, value in request.form.items():
+            if key.startswith('entry_indicator_'):
+                index = key.split('_')[-1]
+                condition = {
+                    'indicator': value,
+                    'param1': request.form.get(f'entry_indicator_param1_{index}'),
+                    'operator': request.form.get(f'entry_operator_{index}'),
+                    'value': request.form.get(f'entry_value_{index}')
+                }
+                entry_conditions.append(condition)
+            elif key.startswith('exit_indicator_'):
+                index = key.split('_')[-1]
+                condition = {
+                    'indicator': value,
+                    'param1': request.form.get(f'exit_indicator_param1_{index}'),
+                    'operator': request.form.get(f'exit_operator_{index}'),
+                    'value': request.form.get(f'exit_value_{index}')
+                }
+                exit_conditions.append(condition)
+
+        strategy['entry_conditions'] = entry_conditions
+        strategy['exit_conditions'] = exit_conditions
+
+        return redirect(url_for('dashboard'))
+
+    return render_template('strategy-builder.html', strategy=strategy)
+
+@app.route('/run-backtest/<int:strategy_id>')
+def run_backtest(strategy_id):
+    """Displays the page to set backtest parameters."""
+    if 'access_token' not in session and 'breeze_session' not in session:
+        return redirect(url_for('login'))
+
+    strategy = strategies.get(strategy_id)
+    if not strategy:
+        return "Strategy not found", 404
+
+    return render_template('run-backtest.html', strategy=strategy)
+
+@app.route('/execute-backtest/<int:strategy_id>', methods=['POST'])
+def execute_backtest(strategy_id):
+    """Executes the backtest with the given parameters."""
+    if 'access_token' not in session and 'breeze_session' not in session:
+        return redirect(url_for('login'))
+
+    strategy = strategies.get(strategy_id)
+    if not strategy:
+        return "Strategy not found", 404
+
     try:
-        mask = (instrument_cache['tradingsymbol'].str.contains(query)) & (instrument_cache['exchange'] == 'NFO')
-        results = instrument_cache[mask].head(10)
-        return jsonify(results.to_dict(orient="records"))
+        from_date_str = request.form.get('from_date')
+        to_date_str = request.form.get('to_date')
+        from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+        to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+
+        historical_data = get_historical_data(kite, breeze, strategy['instrument'], from_date, to_date, "5minute")
+
+        engine = BacktestingEngine(strategy, historical_data)
+        results = engine.run()
+
+        return render_template('backtest.html', results=results, strategy=strategy)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return f"<pre>{traceback.format_exc()}</pre>", 500
 
-# --- Scanner Logic ---
-def run_scanner(proximity_percent=1.0):
-    """
-    FINAL DEBUG VERSION: Scans F&O stocks with extensive logging.
-    """
-    print("\n--- NEW SCANNER RUN ---")
-    print(f"Proximity: {proximity_percent}%")
+@app.route('/delete-strategy/<int:strategy_id>')
+def delete_strategy(strategy_id):
+    """Deletes a strategy."""
+    if 'access_token' not in session and 'breeze_session' not in session:
+        return redirect(url_for('login'))
 
-    global instrument_cache
-    if instrument_cache is None:
-        raise Exception("Instrument cache is not available. Please log in again.")
+    if strategy_id in strategies:
+        del strategies[strategy_id]
 
-    kite.set_access_token(session["access_token"])
-
-    nfo_options = instrument_cache[instrument_cache['segment'] == 'NFO-OPT'].copy()
-    excluded_symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']
-    nfo_options = nfo_options[~nfo_options['name'].isin(excluded_symbols)]
-
-    nfo_options['expiry'] = pd.to_datetime(nfo_options['expiry'])
-    future_expiries = nfo_options[nfo_options['expiry'] > datetime.now()].sort_values('expiry')
-    if future_expiries.empty:
-        return []
-    nearest_expiry = future_expiries['expiry'].min()
-
-    target_options = nfo_options[nfo_options['expiry'] == nearest_expiry]
-
-    underlying_symbols = target_options['name'].unique()
-    equity_instruments = instrument_cache[
-        (instrument_cache['name'].isin(underlying_symbols)) &
-        (instrument_cache['exchange'] == 'NSE') &
-        (instrument_cache['instrument_type'] == 'EQ')
-    ]
-    equity_tokens = {inst['name']: f"{inst['exchange']}:{inst['tradingsymbol']}" for _, inst in equity_instruments.iterrows()}
-
-    if not equity_tokens:
-        return []
-
-    ltp_data = {}
-    token_list = list(equity_tokens.values())
-    batch_size = 200
-    for i in range(0, len(token_list), batch_size):
-        batch = token_list[i:i + batch_size]
-        ltp_data.update(kite.ltp(batch))
-        print(f"Fetched LTP for batch {i//batch_size + 1}...")
-
-    found_stocks = []
-    proximity_decimal = proximity_percent / 100.0
-
-    print("\n--- Processing Stocks ---")
-    for symbol, group in target_options.groupby('name'):
-        equity_token_str = equity_tokens.get(symbol)
-        if not equity_token_str: continue
-
-        ltp_info = ltp_data.get(equity_token_str)
-        if not ltp_info or 'last_price' not in ltp_info: continue
-        ltp = ltp_info['last_price']
-
-        calls = group[group['instrument_type'] == 'CE']
-        puts = group[group['instrument_type'] == 'PE']
-
-        if calls.empty or puts.empty: continue
-
-        high_oi_call = calls.loc[calls['open_interest'].idxmax()]
-        high_oi_put = puts.loc[puts['open_interest'].idxmax()]
-
-        call_strike = high_oi_call['strike']
-        put_strike = high_oi_put['strike']
-
-        # Final detailed check
-        call_diff = abs(ltp - call_strike) / call_strike
-        put_diff = abs(ltp - put_strike) / put_strike
-
-        print(f" - {symbol}: LTP={ltp:.2f}, CallStrike={call_strike}, Diff={call_diff:.4f} | PutStrike={put_strike}, Diff={put_diff:.4f}")
-
-        reason = ""
-        if call_diff <= proximity_decimal:
-            reason = f"LTP is within {proximity_percent}% of the highest OI Call strike ({call_strike})"
-        elif put_diff <= proximity_decimal:
-            reason = f"LTP is within {proximity_percent}% of the highest OI Put strike ({put_strike})"
-
-        if reason:
-            print(f"   *** FOUND MATCH: {symbol} ***")
-            found_stocks.append({
-                "symbol": symbol,
-                "ltp": ltp,
-                "high_oi_call_strike": call_strike,
-                "high_oi_put_strike": put_strike,
-                "reason": reason
-            })
-    print("--- SCANNER RUN COMPLETE ---")
-    return found_stocks
+    return redirect(url_for('dashboard'))
 
 
-# --- Backtesting Logic ---
-def run_backtest(instrument_token, from_date_str, to_date_str, stop_loss, target,
-                 use_tsl, tsl_mode, tsl_fixed_amount, tsl_ema_period, timeframe, allow_reentry):
-    kite.set_access_token(session["access_token"])
-    from_date = datetime.strptime(from_date_str, "%Y-%m-%d")
-    to_date = datetime.strptime(to_date_str, "%Y-%m-%d")
-    historical_data = kite.historical_data(instrument_token, from_date, to_date + timedelta(days=1), timeframe)
-    if not historical_data:
-        raise Exception("Could not fetch historical data. Please check token/dates.")
-    df = pd.DataFrame(historical_data)
-    df['date'] = pd.to_datetime(df['date'])
-    all_trades = []
-
-    for day in pd.date_range(start=from_date, end=to_date):
-        day_df = df[df['date'].dt.date == day.date()]
-        if day_df.empty: continue
-
-        trade_day_df = day_df[day_df['date'].dt.time >= pd.to_datetime("09:30").time()].copy()
-        if trade_day_df.empty: continue
-
-        first_candle = trade_day_df.iloc[0]
-        opening_range_high = first_candle['high']
-        opening_range_low = first_candle['low']
-
-        trade_day_df.loc[:, 'cum_volume'] = trade_day_df['volume'].cumsum()
-        trade_day_df.loc[:, 'cum_volume_high'] = (trade_day_df['high'] * trade_day_df['volume']).cumsum()
-        trade_day_df.loc[:, 'upper_band'] = trade_day_df['cum_volume_high'] / trade_day_df['cum_volume']
-        trade_day_df.loc[:, 'cum_volume_low'] = (trade_day_df['low'] * trade_day_df['volume']).cumsum()
-        trade_day_df.loc[:, 'lower_band'] = trade_day_df['cum_volume_low'] / trade_day_df['cum_volume']
-
-        if use_tsl and tsl_mode == 'ema':
-            trade_day_df.loc[:, 'tsl_ema'] = trade_day_df['close'].ewm(span=tsl_ema_period, adjust=False).mean()
-
-        in_position = False
-        current_trade = {}
-        high_water_mark, low_water_mark = 0, 0
-
-        for i, row in trade_day_df.iterrows():
-            if in_position:
-                lot_size = 50
-                price_change = row['close'] - current_trade['entry_price']
-                pnl = price_change * 0.3 * lot_size if current_trade['type'] == 'SELL_PUT_SPREAD' else -price_change * 0.3 * lot_size
-                current_trade['max_profit'] = max(current_trade.get('max_profit', pnl), pnl)
-                current_trade['max_loss'] = min(current_trade.get('max_loss', pnl), pnl)
-
-                exit_condition_met = False
-                if pnl >= target: exit_condition_met = True
-                elif use_tsl:
-                    if current_trade['type'] == 'SELL_PUT_SPREAD':
-                        if tsl_mode == 'fixed':
-                            high_water_mark = max(high_water_mark, row['close'])
-                            tsl_price = high_water_mark - tsl_fixed_amount
-                        elif tsl_mode == 'ema':
-                            tsl_price = row['tsl_ema']
-                        else: # Band mode
-                            tsl_price = row['lower_band']
-                        if row['close'] < tsl_price: exit_condition_met = True
-                    else: # Bearish trade
-                        if tsl_mode == 'fixed':
-                            low_water_mark = min(low_water_mark, row['close'])
-                            tsl_price = low_water_mark + tsl_fixed_amount
-                        elif tsl_mode == 'ema':
-                            tsl_price = row['tsl_ema']
-                        else: # Band mode
-                            tsl_price = row['upper_band']
-                        if row['close'] > tsl_price: exit_condition_met = True
-                elif pnl <= -stop_loss: exit_condition_met = True
-
-                if exit_condition_met:
-                    current_trade.update({'exit_price': row['close'], 'exit_time': row['date'], 'pnl': pnl})
-                    all_trades.append(current_trade)
-                    in_position = False
-                    current_trade = {}
-                    if not allow_reentry:
-                        break
-
-            if not in_position:
-                def get_strike(price): return round(price / 50) * 50
-                if row['close'] > row['upper_band'] and row['open'] < row['upper_band'] and row['close'] > opening_range_high:
-                    in_position, strike = True, get_strike(row['close'])
-                    current_trade = {"type": "SELL_PUT_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} PE"}
-                    high_water_mark = row['close']
-                elif row['close'] < row['lower_band'] and row['open'] > row['lower_band'] and row['close'] < opening_range_low:
-                    in_position, strike = True, get_strike(row['close'])
-                    current_trade = {"type": "SELL_CALL_SPREAD", "entry_price": row['close'], "entry_time": row['date'], "strike_traded": f"{strike} CE"}
-                    low_water_mark = row['close']
-
-        if in_position:
-            last_row = trade_day_df.iloc[-1]
-            price_change = last_row['close'] - current_trade['entry_price']
-            pnl = price_change * 0.3 * lot_size if current_trade['type'] == 'SELL_PUT_SPREAD' else -price_change * 0.3 * lot_size
-            current_trade.update({'exit_price': last_row['close'], 'exit_time': last_row['date'], 'pnl': pnl, 'max_profit': max(current_trade.get('max_profit', pnl), pnl), 'max_loss': min(current_trade.get('max_loss', pnl), pnl)})
-            all_trades.append(current_trade)
-
-    total_pnl = sum(trade['pnl'] for trade in all_trades)
-    winning_trades = [t for t in all_trades if t['pnl'] > 0]
-    losing_trades = [t for t in all_trades if t['pnl'] <= 0]
-    summary = {"win_percentage": (len(winning_trades) / len(all_trades) * 100) if all_trades else 0, "avg_profit_win": sum(t['pnl'] for t in winning_trades) / len(winning_trades) if winning_trades else 0, "avg_loss_lose": sum(t['pnl'] for t in losing_trades) / len(losing_trades) if losing_trades else 0}
-    return {"trades": all_trades, "total_pnl": total_pnl, "summary": summary}
-
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
