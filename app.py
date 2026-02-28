@@ -4,6 +4,11 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
+from trading_terminal.market_data import MarketDataHandler
+from trading_terminal.strategy import MeanReversionStrategy
+from trading_terminal.ems import EMS
+from trading_terminal.risk_manager import RiskManager
+from trading_terminal.logger import Heartbeat
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -16,6 +21,66 @@ kite = KiteConnect(api_key=api_key)
 
 # --- Instrument Caching and Search (In-Memory) ---
 instrument_cache = None
+terminal_instance = None
+terminal_logs = []
+
+def add_terminal_log(message):
+    global terminal_logs
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    terminal_logs.append(f"[{timestamp}] {message}")
+    if len(terminal_logs) > 100:
+        terminal_logs.pop(0)
+
+class TerminalManager:
+    def __init__(self, api_key, access_token, instrument_token, trading_symbol, exchange):
+        self.market_data = MarketDataHandler(api_key, access_token)
+        self.strategy = MeanReversionStrategy(instrument_token)
+        self.ems = EMS(api_key, access_token)
+        self.risk_manager = RiskManager()
+        self.heartbeat = Heartbeat(interval=60)
+        self.instrument_token = int(instrument_token)
+        self.trading_symbol = trading_symbol
+        self.exchange = exchange
+        self.running = False
+
+    def start(self):
+        self.market_data.set_on_tick_callback(self.handle_ticks)
+        self.market_data.connect()
+        self.market_data.subscribe([self.instrument_token])
+        self.heartbeat.start()
+        self.running = True
+        add_terminal_log(f"Terminal started for {self.trading_symbol}")
+
+    def handle_ticks(self, ticks):
+        if not self.running:
+            return
+        for tick in ticks:
+            self.strategy.update_data(tick)
+            signal = self.strategy.generate_signal()
+            if signal:
+                add_terminal_log(f"Signal generated: {signal}")
+                order_params = {
+                    "variety": "regular",
+                    "exchange": self.exchange,
+                    "tradingsymbol": self.trading_symbol,
+                    "transaction_type": "BUY" if signal == "BUY" else "SELL",
+                    "quantity": 1,
+                    "product": "CNC",
+                    "order_type": "MARKET"
+                }
+                if self.risk_manager.check_risk(order_params):
+                    order_id = self.ems.place_order(**order_params)
+                    if order_id:
+                        add_terminal_log(f"Order placed: {order_id}")
+                        self.risk_manager.increment_trade_count()
+                else:
+                    add_terminal_log("Risk check failed!")
+
+    def stop(self):
+        self.running = False
+        self.market_data.stop()
+        self.heartbeat.stop()
+        add_terminal_log("Terminal stopped.")
 
 def update_instrument_cache():
     """Fetches and caches the instrument list in a global variable."""
@@ -111,6 +176,49 @@ def scanner():
 
     return render_template("scanner.html", results=None)
 
+
+@app.route("/terminal")
+def terminal_ui():
+    if "access_token" not in session:
+        return redirect("/")
+    return render_template("terminal.html")
+
+@app.route("/api/terminal/start", methods=["POST"])
+def start_terminal():
+    global terminal_instance
+    if "access_token" not in session:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
+    data = request.json
+    instrument_token = data.get("instrument_token")
+    trading_symbol = data.get("trading_symbol")
+    exchange = data.get("exchange")
+
+    if not all([instrument_token, trading_symbol, exchange]):
+        return jsonify({"status": "error", "message": "Missing parameters"}), 400
+
+    if terminal_instance and terminal_instance.running:
+        return jsonify({"status": "error", "message": "Terminal already running"}), 400
+
+    try:
+        terminal_instance = TerminalManager(api_key, session["access_token"], instrument_token, trading_symbol, exchange)
+        terminal_instance.start()
+        return jsonify({"status": "success", "message": "Terminal started"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/terminal/stop", methods=["POST"])
+def stop_terminal():
+    global terminal_instance
+    if terminal_instance:
+        terminal_instance.stop()
+        terminal_instance = None
+        return jsonify({"status": "success", "message": "Terminal stopped"})
+    return jsonify({"status": "error", "message": "Terminal not running"}), 400
+
+@app.route("/api/terminal/logs")
+def get_logs():
+    return jsonify(terminal_logs)
 
 @app.route("/api/search-instruments")
 def search_instruments():

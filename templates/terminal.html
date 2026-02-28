@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Terminal</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .nav { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+        .nav a { margin-right: 15px; text-decoration: none; color: #333; }
+        .container { max-width: 800px; margin: auto; }
+        .card { border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { width: 100%; padding: 8px; box-sizing: border-box; }
+        button { padding: 10px 15px; background: #5cb85c; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button.stop { background: #d9534f; }
+        #status-display { font-weight: bold; margin-top: 10px; }
+        .log-container { background: #f4f4f4; border: 1px solid #ccc; padding: 10px; height: 200px; overflow-y: scroll; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="/home">Home</a>
+            <a href="/backtest">Backtesting</a>
+            <a href="/scanner">Scanner</a>
+            <a href="/terminal"><b>Terminal</b></a>
+            <a href="/logout" style="float: right;">Logout</a>
+        </div>
+
+        <h1>Trading Terminal</h1>
+
+        <div class="card">
+            <h3>Terminal Control</h3>
+            <div class="form-group">
+                <label for="instrument_token">Instrument Token (e.g., 12345):</label>
+                <input type="number" id="instrument_token" value="256265" placeholder="Enter instrument token">
+            </div>
+            <div class="form-group">
+                <label for="trading_symbol">Trading Symbol:</label>
+                <input type="text" id="trading_symbol" value="INFY" placeholder="Enter symbol (e.g. INFY)">
+            </div>
+             <div class="form-group">
+                <label for="exchange">Exchange:</label>
+                <input type="text" id="exchange" value="NSE" placeholder="Enter exchange (e.g. NSE)">
+            </div>
+
+            <button id="start-btn">Start Terminal</button>
+            <button id="stop-btn" class="stop">Stop Terminal</button>
+            <div id="status-display">Status: Disconnected</div>
+        </div>
+
+        <div class="card">
+            <h3>Live Logs</h3>
+            <div id="log-display" class="log-container">
+                Terminal logs will appear here...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const statusDisplay = document.getElementById('status-display');
+        const logDisplay = document.getElementById('log-display');
+
+        function updateLogs(logs) {
+            logDisplay.innerHTML = '';
+            logs.forEach(log => {
+                const entry = document.createElement('div');
+                entry.textContent = log;
+                logDisplay.appendChild(entry);
+            });
+            logDisplay.scrollTop = logDisplay.scrollHeight;
+        }
+
+        async function fetchLogs() {
+            try {
+                const response = await fetch('/api/terminal/logs');
+                const logs = await response.json();
+                updateLogs(logs);
+            } catch (err) {
+                console.error("Error fetching logs:", err);
+            }
+        }
+
+        setInterval(fetchLogs, 2000); // Poll every 2 seconds
+
+        function appendLocalLog(message) {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] LOCAL: ${message}`;
+            logDisplay.appendChild(entry);
+            logDisplay.scrollTop = logDisplay.scrollHeight;
+        }
+
+        startBtn.addEventListener('click', async () => {
+            const instrumentToken = document.getElementById('instrument_token').value;
+            const tradingSymbol = document.getElementById('trading_symbol').value;
+            const exchange = document.getElementById('exchange').value;
+
+            appendLocalLog("Starting terminal...");
+            try {
+                const response = await fetch('/api/terminal/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instrument_token: instrumentToken, trading_symbol: tradingSymbol, exchange: exchange })
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    statusDisplay.textContent = 'Status: Running';
+                    statusDisplay.style.color = 'green';
+                    appendLocalLog("Terminal started successfully.");
+                } else {
+                    appendLocalLog("Error: " + data.message);
+                }
+            } catch (err) {
+                appendLocalLog("Error: " + err.message);
+            }
+        });
+
+        stopBtn.addEventListener('click', async () => {
+            appendLocalLog("Stopping terminal...");
+            try {
+                const response = await fetch('/api/terminal/stop', { method: 'POST' });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    statusDisplay.textContent = 'Status: Disconnected';
+                    statusDisplay.style.color = 'red';
+                    appendLocalLog("Terminal stopped.");
+                } else {
+                    appendLocalLog("Error: " + data.message);
+                }
+            } catch (err) {
+                appendLocalLog("Error: " + err.message);
+            }
+        });
+    </script>
+</body>
+</html>
