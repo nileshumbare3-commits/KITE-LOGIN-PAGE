@@ -1,0 +1,5 @@
+2026-02-28 14:26:39,866 - werkzeug - WARNING -  * Debugger is active!
+2026-02-28 14:26:39,866 - werkzeug - INFO -  * Debugger PIN: 410-907-091
+2026-02-28 14:26:54,920 - werkzeug - INFO -  * Detected change in '/app/app.py', reloading
+2026-02-28 14:27:02,095 - werkzeug - WARNING -  * Debugger is active!
+2026-02-28 14:27:02,096 - werkzeug - INFO -  * Debugger PIN: 410-907-091

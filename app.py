@@ -1,10 +1,12 @@
 from flask import Flask, request, redirect, session, render_template, jsonify
 from kiteconnect import KiteConnect
+from breeze_connect import BreezeConnect
 import os
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
 from trading_terminal.market_data import MarketDataHandler
+from trading_terminal.breeze_handler import BreezeHandler
 from trading_terminal.strategy import MeanReversionStrategy
 from trading_terminal.ems import EMS
 from trading_terminal.risk_manager import RiskManager
@@ -13,11 +15,16 @@ from trading_terminal.logger import Heartbeat
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Replace with your API key and secret
-api_key = "YOUR_API_KEY"
-api_secret = "YOUR_API_SECRET"
+# Use environment variables for API keys and secrets for security
+api_key = os.getenv("KITE_API_KEY", "YOUR_API_KEY")
+api_secret = os.getenv("KITE_API_SECRET", "YOUR_API_SECRET")
+
+# Breeze Credentials
+breeze_api_key = os.getenv("BREEZE_API_KEY", "YOUR_BREEZE_API_KEY")
+breeze_api_secret = os.getenv("BREEZE_API_SECRET", "YOUR_BREEZE_API_SECRET")
 
 kite = KiteConnect(api_key=api_key)
+breeze = BreezeConnect(api_key=breeze_api_key)
 
 # --- Instrument Caching and Search (In-Memory) ---
 instrument_cache = None
@@ -32,21 +39,32 @@ def add_terminal_log(message):
         terminal_logs.pop(0)
 
 class TerminalManager:
-    def __init__(self, api_key, access_token, instrument_token, trading_symbol, exchange):
-        self.market_data = MarketDataHandler(api_key, access_token)
-        self.strategy = MeanReversionStrategy(instrument_token)
-        self.ems = EMS(api_key, access_token)
-        self.risk_manager = RiskManager()
-        self.heartbeat = Heartbeat(interval=60)
-        self.instrument_token = int(instrument_token)
+    def __init__(self, broker, api_key, access_token, instrument_token, trading_symbol, exchange, api_secret=None, breeze_instance=None):
+        self.broker = broker
         self.trading_symbol = trading_symbol
         self.exchange = exchange
+        # Kite uses numeric instrument_token, Breeze uses stock_code (string symbol)
+        self.instrument_token = int(instrument_token) if broker == "kite" else trading_symbol
+
+        if broker == "kite":
+            self.market_data = MarketDataHandler(api_key, access_token)
+            self.ems = EMS(api_key, access_token)
+        else:
+            self.market_data = BreezeHandler(api_key, api_secret, access_token, breeze_instance=breeze_instance)
+            self.ems = self.market_data # For simplicity, BreezeHandler handles orders too
+
+        self.strategy = MeanReversionStrategy(self.instrument_token)
+        self.risk_manager = RiskManager()
+        self.heartbeat = Heartbeat(interval=60)
         self.running = False
 
     def start(self):
         self.market_data.set_on_tick_callback(self.handle_ticks)
         self.market_data.connect()
-        self.market_data.subscribe([self.instrument_token])
+
+        # For Breeze, we subscribe using the symbol
+        subscription_token = self.trading_symbol if self.broker == "breeze" else self.instrument_token
+        self.market_data.subscribe([subscription_token])
         self.heartbeat.start()
         self.running = True
         add_terminal_log(f"Terminal started for {self.trading_symbol}")
@@ -59,15 +77,29 @@ class TerminalManager:
             signal = self.strategy.generate_signal()
             if signal:
                 add_terminal_log(f"Signal generated: {signal}")
-                order_params = {
-                    "variety": "regular",
-                    "exchange": self.exchange,
-                    "tradingsymbol": self.trading_symbol,
-                    "transaction_type": "BUY" if signal == "BUY" else "SELL",
-                    "quantity": 1,
-                    "product": "CNC",
-                    "order_type": "MARKET"
-                }
+                if self.broker == "kite":
+                    order_params = {
+                        "variety": "regular",
+                        "exchange": self.exchange,
+                        "tradingsymbol": self.trading_symbol,
+                        "transaction_type": "BUY" if signal == "BUY" else "SELL",
+                        "quantity": 1,
+                        "product": "CNC",
+                        "order_type": "MARKET"
+                    }
+                else:
+                    # Breeze order format
+                    order_params = {
+                        "stock_code": self.trading_symbol,
+                        "exchange_code": self.exchange,
+                        "product": "cash",
+                        "action": "buy" if signal == "BUY" else "sell",
+                        "order_type": "market",
+                        "quantity": 1,
+                        "price": 0,
+                        "validity": "day"
+                    }
+
                 if self.risk_manager.check_risk(order_params):
                     order_id = self.ems.place_order(**order_params)
                     if order_id:
@@ -105,6 +137,12 @@ def index():
 def login():
     return redirect(kite.login_url())
 
+@app.route("/login-breeze")
+def login_breeze():
+    # ICICI Direct Breeze login URL
+    login_url = f"https://api.icicidirect.com/apiuser/login?api_key={breeze_api_key}"
+    return redirect(login_url)
+
 @app.route("/callback")
 def callback():
     request_token = request.args.get("request_token")
@@ -113,7 +151,24 @@ def callback():
     try:
         data = kite.generate_session(request_token, api_secret=api_secret)
         session["access_token"] = data["access_token"]
+        session["broker"] = "kite"
         update_instrument_cache()
+        return redirect("/home")
+    except Exception as e:
+        return f"Error: {e}"
+
+@app.route("/callback-breeze")
+def callback_breeze():
+    apisession = request.args.get("apisession")
+    if not apisession:
+        return "Error: apisession not found."
+    try:
+        # For Breeze, the apisession is used to generate the full session
+        breeze.generate_session(api_secret=breeze_api_secret, session_token=apisession)
+        session["access_token"] = apisession # Store it as access_token for simplicity
+        session["broker"] = "breeze"
+        # Breeze doesn't have a direct instrument fetch like Kite in the same way,
+        # but we can mock or handle it differently
         return redirect("/home")
     except Exception as e:
         return f"Error: {e}"
@@ -122,10 +177,19 @@ def callback():
 def home():
     if "access_token" not in session:
         return redirect("/")
+
+    broker = session.get("broker", "kite")
     try:
-        kite.set_access_token(session["access_token"])
-        profile = kite.profile()
-        return render_template("home.html", user=profile)
+        if broker == "kite":
+            kite.set_access_token(session["access_token"])
+            profile = kite.profile()
+            user_data = {"user_name": profile.get("user_name"), "email": profile.get("email"), "broker": "Kite"}
+        else:
+            # Breeze doesn't have a simple profile() call in the same way,
+            # maybe get_customer_details()
+            user_data = {"user_name": "ICICI User", "email": "N/A", "broker": "ICICI Direct (Breeze)"}
+
+        return render_template("home.html", user=user_data)
     except Exception as e:
         return f"Error: {e}"
 
@@ -194,14 +258,21 @@ def start_terminal():
     trading_symbol = data.get("trading_symbol")
     exchange = data.get("exchange")
 
-    if not all([instrument_token, trading_symbol, exchange]):
+    if not all([trading_symbol, exchange]):
         return jsonify({"status": "error", "message": "Missing parameters"}), 400
 
     if terminal_instance and terminal_instance.running:
         return jsonify({"status": "error", "message": "Terminal already running"}), 400
 
     try:
-        terminal_instance = TerminalManager(api_key, session["access_token"], instrument_token, trading_symbol, exchange)
+        broker = session.get("broker", "kite")
+        if broker == "kite":
+            if not instrument_token:
+                 return jsonify({"status": "error", "message": "Instrument Token is required for Kite"}), 400
+            terminal_instance = TerminalManager(broker, api_key, session["access_token"], instrument_token, trading_symbol, exchange)
+        else:
+            terminal_instance = TerminalManager(broker, breeze_api_key, session["access_token"], instrument_token, trading_symbol, exchange, api_secret=breeze_api_secret, breeze_instance=breeze)
+
         terminal_instance.start()
         return jsonify({"status": "success", "message": "Terminal started"})
     except Exception as e:
