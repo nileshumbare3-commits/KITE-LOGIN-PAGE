@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import numpy as np
 from trading_terminal.market_data import MarketDataHandler
 from trading_terminal.breeze_handler import BreezeHandler
-from trading_terminal.strategy import MeanReversionStrategy
+from trading_terminal.strategy import MeanReversionStrategy, VWAPBandStrategy
 from trading_terminal.ems import EMS
 from trading_terminal.risk_manager import RiskManager
 from trading_terminal.logger import Heartbeat
@@ -39,7 +39,7 @@ def add_terminal_log(message):
         terminal_logs.pop(0)
 
 class TerminalManager:
-    def __init__(self, broker, api_key, access_token, instrument_token, trading_symbol, exchange, api_secret=None, breeze_instance=None):
+    def __init__(self, broker, api_key, access_token, instrument_token, trading_symbol, exchange, strategy_name='mean_reversion', api_secret=None, breeze_instance=None):
         self.broker = broker
         self.trading_symbol = trading_symbol
         self.exchange = exchange
@@ -53,10 +53,16 @@ class TerminalManager:
             self.market_data = BreezeHandler(api_key, api_secret, access_token, breeze_instance=breeze_instance)
             self.ems = self.market_data # For simplicity, BreezeHandler handles orders too
 
-        self.strategy = MeanReversionStrategy(self.instrument_token)
+        if strategy_name == 'vwap_band':
+            self.strategy = VWAPBandStrategy(self.instrument_token)
+        else:
+            self.strategy = MeanReversionStrategy(self.instrument_token)
+
         self.risk_manager = RiskManager()
         self.heartbeat = Heartbeat(interval=60)
         self.running = False
+        self.active_position = None # None, 'BUY', or 'SELL'
+        self.tsl_price = 0
 
     def start(self):
         self.market_data.set_on_tick_callback(self.handle_ticks)
@@ -74,8 +80,24 @@ class TerminalManager:
             return
         for tick in ticks:
             self.strategy.update_data(tick)
+
+            # Trailing Stop Loss Logic
+            if self.active_position:
+                current_price = tick['last_price']
+                # Request: "TRALING STOP LOSS USE VWAP OF LOW OR HIGH OF SESSION VWAP"
+                if hasattr(self.strategy, 'get_tsl'):
+                    self.tsl_price = self.strategy.get_tsl(self.active_position)
+
+                    if self.active_position == 'BUY' and current_price < self.tsl_price:
+                        add_terminal_log(f"TSL Hit! Exit BUY at {current_price}")
+                        self.active_position = None
+                    elif self.active_position == 'SELL' and current_price > self.tsl_price:
+                        add_terminal_log(f"TSL Hit! Exit SELL at {current_price}")
+                        self.active_position = None
+
             signal = self.strategy.generate_signal()
-            if signal:
+            # Only trigger if no active position or reverse signal
+            if signal and signal != self.active_position:
                 add_terminal_log(f"Signal generated: {signal}")
                 if self.broker == "kite":
                     order_params = {
@@ -105,6 +127,7 @@ class TerminalManager:
                     if order_id:
                         add_terminal_log(f"Order placed: {order_id}")
                         self.risk_manager.increment_trade_count()
+                        self.active_position = signal
                 else:
                     add_terminal_log("Risk check failed!")
 
@@ -266,12 +289,13 @@ def start_terminal():
 
     try:
         broker = session.get("broker", "kite")
+        strategy_name = data.get("strategy", "mean_reversion")
         if broker == "kite":
             if not instrument_token:
                  return jsonify({"status": "error", "message": "Instrument Token is required for Kite"}), 400
-            terminal_instance = TerminalManager(broker, api_key, session["access_token"], instrument_token, trading_symbol, exchange)
+            terminal_instance = TerminalManager(broker, api_key, session["access_token"], instrument_token, trading_symbol, exchange, strategy_name=strategy_name)
         else:
-            terminal_instance = TerminalManager(broker, breeze_api_key, session["access_token"], instrument_token, trading_symbol, exchange, api_secret=breeze_api_secret, breeze_instance=breeze)
+            terminal_instance = TerminalManager(broker, breeze_api_key, session["access_token"], instrument_token, trading_symbol, exchange, strategy_name=strategy_name, api_secret=breeze_api_secret, breeze_instance=breeze)
 
         terminal_instance.start()
         return jsonify({"status": "success", "message": "Terminal started"})

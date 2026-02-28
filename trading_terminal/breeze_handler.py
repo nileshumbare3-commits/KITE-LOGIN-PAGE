@@ -1,5 +1,6 @@
 from breeze_connect import BreezeConnect
 import logging
+from datetime import datetime
 import base64
 import json
 
@@ -36,9 +37,24 @@ class BreezeHandler:
         if self.on_tick_callback:
             # Normalize Breeze tick to match the format used by the strategy
             # Use 'symbol' consistently for Breeze identification
+
+            # Convert string timestamp to datetime object
+            raw_ts = tick.get('datetime')
+            ts = None
+            if raw_ts:
+                try:
+                    # Breeze typically returns 'YYYY-MM-DD HH:MM:SS'
+                    ts = datetime.strptime(raw_ts, '%Y-%m-%d %H:%M:%S')
+                except:
+                    ts = datetime.now() # Fallback
+
             normalized_tick = {
                 'instrument_token': tick.get('stock_code'),
-                'last_price': float(tick.get('last', 0)) if tick.get('last') else 0.0
+                'last_price': float(tick.get('last', 0)) if tick.get('last') else 0.0,
+                'volume': int(tick.get('vtt', 1)) if tick.get('vtt') else 1, # 'vtt' is often total volume traded
+                'high': float(tick.get('high', 0)) if tick.get('high') else 0.0,
+                'low': float(tick.get('low', 0)) if tick.get('low') else 0.0,
+                'timestamp': ts
             }
             self.on_tick_callback([normalized_tick])
 

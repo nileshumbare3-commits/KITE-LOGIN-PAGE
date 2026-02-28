@@ -45,6 +45,13 @@
                 <label for="exchange">Exchange:</label>
                 <input type="text" id="exchange" value="NSE" placeholder="Enter exchange (e.g. NSE)">
             </div>
+            <div class="form-group">
+                <label for="strategy">Strategy:</label>
+                <select id="strategy">
+                    <option value="mean_reversion">Mean Reversion</option>
+                    <option value="vwap_band">VWAP Band (High/Low)</option>
+                </select>
+            </div>
 
             <button id="start-btn">Start Terminal</button>
             <button id="stop-btn" class="stop">Stop Terminal</button>
@@ -98,13 +105,14 @@
             const instrumentToken = document.getElementById('instrument_token').value;
             const tradingSymbol = document.getElementById('trading_symbol').value;
             const exchange = document.getElementById('exchange').value;
+            const strategy = document.getElementById('strategy').value;
 
             appendLocalLog("Starting terminal...");
             try {
                 const response = await fetch('/api/terminal/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ instrument_token: instrumentToken, trading_symbol: tradingSymbol, exchange: exchange })
+                    body: JSON.stringify({ instrument_token: instrumentToken, trading_symbol: tradingSymbol, exchange: exchange, strategy: strategy })
                 });
                 const data = await response.json();
                 if (data.status === 'success') {
